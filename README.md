@@ -51,6 +51,7 @@ The first strong user stories are:
 - supervised computer-use tools on macOS
 - secure bridge pairing token model for mobile-to-desktop access
 - phone UI for pairing, briefings, and quick-action Butler workflows
+- Butler-managed OpenClaw operator-stack checks, install flow, and gateway repair from the phone
 - optional RTK/OpenClaw integration tooling for shell-output token reduction in agent flows
 
 ## What is still in progress
@@ -77,6 +78,21 @@ cd bridge && AIBUTLER_BRIDGE_ALLOW_LAN=1 python server.py
 ```
 
 For first-run product setup, start the desktop app and use the onboarding flow instead of exporting secrets in the terminal.
+
+## OpenClaw Operator Stack
+
+Butler can now treat OpenClaw as a first-class local operator layer instead of a hidden dependency.
+
+The runtime can:
+
+- inspect OpenClaw and gateway readiness via `openclaw_status`
+- install OpenClaw from the official package path via `install_openclaw`
+- set `gateway.mode=local` and restart via `openclaw_configure_local_gateway`
+- install the gateway service via `openclaw_gateway_install`
+- restart the gateway via `openclaw_gateway_restart`
+- run repair / diagnostics via `openclaw_doctor`
+
+The Android `Act` surface exposes these controls directly once your Mac is paired, so the phone can bootstrap the local operator stack without dropping back to a terminal.
 
 ## Optional RTK Integration
 

@@ -14,6 +14,7 @@ from tools.secrets import TOOLS as SECRET_TOOLS
 from tools.life_data import TOOLS as LIFE_DATA_TOOLS
 from tools.context_tools import TOOLS as CONTEXT_TOOLS
 from tools.relationship_tools import TOOLS as RELATIONSHIP_TOOLS
+from tools.openclaw_tools import TOOLS as OPENCLAW_TOOLS
 from tools.rtk_tools import TOOLS as RTK_TOOLS
 
 DEFAULT_TOOL_META = {
@@ -410,6 +411,42 @@ TOOL_META = {
         "risk": "low",
         "reversible": False,
     },
+    "openclaw_status": {
+        "category": "integrations",
+        "capability": "general",
+        "read_only": True,
+        "risk": "low",
+    },
+    "install_openclaw": {
+        "category": "integrations",
+        "capability": "general",
+        "risk": "medium",
+        "reversible": False,
+    },
+    "openclaw_gateway_install": {
+        "category": "integrations",
+        "capability": "general",
+        "risk": "medium",
+        "reversible": False,
+    },
+    "openclaw_configure_local_gateway": {
+        "category": "integrations",
+        "capability": "general",
+        "risk": "medium",
+        "reversible": False,
+    },
+    "openclaw_gateway_restart": {
+        "category": "integrations",
+        "capability": "general",
+        "risk": "medium",
+        "reversible": False,
+    },
+    "openclaw_doctor": {
+        "category": "integrations",
+        "capability": "general",
+        "risk": "medium",
+        "reversible": False,
+    },
     "rtk_status": {
         "category": "integrations",
         "capability": "general",
@@ -447,6 +484,7 @@ def _iter_raw_tools() -> dict:
         **LIFE_DATA_TOOLS,
         **CONTEXT_TOOLS,
         **RELATIONSHIP_TOOLS,
+        **OPENCLAW_TOOLS,
         **RTK_TOOLS,
         **plugin_tools,
     }

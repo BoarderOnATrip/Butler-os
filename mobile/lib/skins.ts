@@ -52,6 +52,7 @@ export const PHONE_MODE_META: Record<
 const CORE_MODULES: ModuleId[] = [
   "hero_brief",
   "pairing",
+  "operator_stack",
   "voice",
   "recipes",
   "review_lane",
@@ -70,6 +71,7 @@ const CORE_RECIPES: RecipeId[] = [
   "pipeline-sweep",
   "inbox-triage",
   "bring-butler-online",
+  "enable-operator-stack",
 ];
 
 export const RAVEN_SKIN: PhoneSkinManifest = {
@@ -113,12 +115,13 @@ export const BUTLER_LITE_SKIN: PhoneSkinManifest = {
   moduleIds: [
     "hero_brief",
     "pairing",
+    "operator_stack",
     "recipes",
     "review_lane",
     "capture_pending",
     "conversation_memory",
   ],
-  recipeIds: ["daily-brief", "bring-butler-online"],
+  recipeIds: ["daily-brief", "bring-butler-online", "enable-operator-stack"],
 };
 
 export const PHONE_SKINS = [RAVEN_SKIN, FOUNDER_SKIN, BUTLER_LITE_SKIN];

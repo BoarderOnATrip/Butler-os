@@ -190,6 +190,68 @@ class ButlerCoreAgent:
         if any(
             phrase in prompt_lower
             for phrase in (
+                "install openclaw",
+                "enable openclaw",
+                "get openclaw online",
+                "operator stack online",
+                "enable operator stack",
+                "install gateway",
+                "gateway install",
+            )
+        ):
+            return {
+                "mode": "openclaw_enable",
+                "tool_calls": [
+                    {"tool": "openclaw_status", "args": {}},
+                    {"tool": "install_openclaw", "args": {}},
+                    {"tool": "openclaw_configure_local_gateway", "args": {}},
+                    {"tool": "openclaw_gateway_install", "args": {}},
+                    {"tool": "openclaw_status", "args": {}},
+                ],
+            }
+
+        if any(
+            phrase in prompt_lower
+            for phrase in (
+                "repair openclaw",
+                "fix openclaw",
+                "openclaw doctor",
+                "repair gateway",
+                "gateway doctor",
+                "gateway health",
+                "restart gateway",
+            )
+        ):
+            return {
+                "mode": "openclaw_repair",
+                "tool_calls": [
+                    {"tool": "openclaw_status", "args": {}},
+                    {"tool": "openclaw_configure_local_gateway", "args": {}},
+                    {"tool": "openclaw_doctor", "args": {"apply_fixes": True}},
+                    {"tool": "openclaw_status", "args": {}},
+                ],
+            }
+
+        if any(
+            phrase in prompt_lower
+            for phrase in (
+                "openclaw",
+                "operator stack",
+                "gateway status",
+                "openclaw status",
+                "gateway health",
+            )
+        ):
+            return {
+                "mode": "openclaw_status",
+                "tool_calls": [
+                    {"tool": "openclaw_status", "args": {}},
+                ],
+            }
+
+        if any(
+            phrase in prompt_lower
+            for phrase in (
                 "owe a reply",
                 "follow up",
                 "follow-up",
@@ -309,6 +371,45 @@ class ButlerCoreAgent:
             if already_ready:
                 return "Butler is online. Existing stored credentials were re-injected into the runtime.", []
             return "No missing intelligence secrets needed recovery.", []
+
+        if mode == "openclaw_status":
+            status = dict(output or {})
+            gateway = dict(status.get("gateway") or {})
+            if not status.get("openclaw_installed"):
+                return "OpenClaw is not installed yet on this Mac. Butler can install it and bring the gateway online from the phone.", []
+            if gateway.get("running"):
+                return "OpenClaw is installed and the gateway looks online. Butler can use it as the local operator stack now.", []
+            return "OpenClaw is installed, but the gateway does not look healthy yet. Install or repair the gateway next.", []
+
+        if mode == "openclaw_enable":
+            action_result = next(
+                (item.get("result") for item in tool_results[1:] if item.get("result") and not item["result"].get("ok", True)),
+                None,
+            )
+            if action_result:
+                return (action_result.get("error") or "OpenClaw setup failed.", [])
+
+            final_status_result = tool_results[-1]["result"] if tool_results else {}
+            final_status = dict((final_status_result or {}).get("output") or {})
+            gateway = dict(final_status.get("gateway") or {})
+            if final_status.get("openclaw_installed") and gateway.get("running"):
+                return "OpenClaw is installed and the gateway is online. Butler's operator stack is ready on this Mac.", []
+            return "OpenClaw was installed or updated, but the gateway still needs attention. Run doctor next.", []
+
+        if mode == "openclaw_repair":
+            repair_result = next(
+                (item.get("result") for item in tool_results[1:] if item.get("result") and not item["result"].get("ok", True)),
+                None,
+            )
+            if repair_result:
+                return (repair_result.get("error") or "OpenClaw repair failed.", [])
+
+            final_status_result = tool_results[-1]["result"] if tool_results else {}
+            final_status = dict((final_status_result or {}).get("output") or {})
+            gateway = dict(final_status.get("gateway") or {})
+            if final_status.get("openclaw_installed") and gateway.get("running"):
+                return "OpenClaw doctor completed and the gateway looks healthy again.", []
+            return "OpenClaw doctor completed, but the gateway still does not look healthy.", []
 
         if mode == "rtk_status":
             status = dict(output or {})

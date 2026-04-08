@@ -147,6 +147,84 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "openclaw_status",
+            "description": "Check whether OpenClaw and its gateway are installed and ready on the local Mac.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "install_openclaw",
+            "description": "Install OpenClaw on the local Mac so Butler can use it as the operator stack.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "force": {
+                        "type": "boolean",
+                        "description": "Reinstall even if OpenClaw already looks present.",
+                        "default": False,
+                    }
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "openclaw_gateway_install",
+            "description": "Install or repair the OpenClaw gateway service on the local Mac.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "openclaw_configure_local_gateway",
+            "description": "Set OpenClaw's gateway mode to local and restart the gateway.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "openclaw_gateway_restart",
+            "description": "Restart the OpenClaw gateway service on the local Mac.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "openclaw_doctor",
+            "description": "Run OpenClaw's built-in doctor command to repair or diagnose the local install.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "apply_fixes": {
+                        "type": "boolean",
+                        "description": "Apply OpenClaw's suggested fixes while running doctor.",
+                        "default": False,
+                    }
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "rtk_status",
             "description": "Check whether RTK and Butler's vendored OpenClaw rewrite plugin are installed and ready.",
             "parameters": {

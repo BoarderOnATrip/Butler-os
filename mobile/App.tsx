@@ -111,6 +111,33 @@ interface ActivityItem {
   pin_note?: string;
 }
 
+interface OpenClawGatewayState {
+  ok?: boolean;
+  running?: boolean;
+  summary?: string;
+  raw?: string;
+  payload?: Record<string, unknown> | null;
+}
+
+interface OpenClawStatusSnapshot {
+  openclaw_installed?: boolean;
+  openclaw_path?: string;
+  openclaw_version?: string;
+  node_installed?: boolean;
+  node_version?: string;
+  npm_installed?: boolean;
+  npm_version?: string;
+  npm_global_prefix?: string;
+  npm_global_bin?: string;
+  npm_global_bin_on_path?: boolean;
+  gateway?: OpenClawGatewayState;
+  openclaw_user_dir?: string;
+  extensions_dir?: string;
+  rtk_plugin_installed?: boolean;
+  rtk_plugin_dir?: string;
+  suggested_steps?: string[];
+}
+
 type CaptureKind = "receipt" | "note" | "person" | "artifact";
 type ReviewStatus = "new" | "deferred" | "dismissed" | "promoted";
 
@@ -433,6 +460,9 @@ export default function App() {
   const [phoneMetadataRefreshBusy, setPhoneMetadataRefreshBusy] = useState(false);
   const [phoneMetadataPromoteBusy, setPhoneMetadataPromoteBusy] = useState("");
   const [phoneMetadataSyncBusy, setPhoneMetadataSyncBusy] = useState("");
+  const [openclawStatus, setOpenclawStatus] = useState<OpenClawStatusSnapshot | null>(null);
+  const [openclawBusy, setOpenclawBusy] = useState(false);
+  const [openclawActionBusy, setOpenclawActionBusy] = useState("");
   const conversationRef = useRef<any>(null);
 
   useEffect(() => {
@@ -728,6 +758,92 @@ export default function App() {
       setContextMapBusy(false);
     }
   }, [desktopPaired, handleToolCall, unwrapToolResult]);
+
+  const refreshOpenClawStatus = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!desktopPaired) {
+        setOpenclawStatus(null);
+        return;
+      }
+
+      setOpenclawBusy(true);
+      try {
+        const result = await handleToolCall("openclaw_status", {});
+        const parsed = unwrapToolResult(result);
+        if (!parsed.ok) {
+          throw new Error(parsed.error || "Failed to inspect the operator stack.");
+        }
+        const snapshot =
+          parsed.output && typeof parsed.output === "object"
+            ? (parsed.output as OpenClawStatusSnapshot)
+            : null;
+        setOpenclawStatus(snapshot);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        setLastResponse(message);
+        if (!options?.silent) {
+          Alert.alert("OpenClaw check failed", message);
+        }
+      } finally {
+        setOpenclawBusy(false);
+      }
+    },
+    [desktopPaired, handleToolCall, unwrapToolResult]
+  );
+
+  const runOpenClawAction = useCallback(
+    async (
+      busyKey: string,
+      toolName: string,
+      args: Record<string, unknown>,
+      {
+        successTitle,
+        failureTitle,
+      }: {
+        successTitle: string;
+        failureTitle: string;
+      }
+    ) => {
+      if (!desktopPaired) {
+        Alert.alert("Mac not paired", "Pair your Mac first so Butler can manage the operator stack.");
+        return;
+      }
+
+      setOpenclawActionBusy(busyKey);
+      try {
+        const result = await handleToolCall(toolName, args);
+        const parsed = unwrapToolResult(result);
+        const payload = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+        const approvalId = stringValue(payload.approval_request_id);
+
+        if (!parsed.ok) {
+          if (approvalId) {
+            const stagedMessage = `${parsed.error || "Approval required."} Approval id: ${approvalId}.`;
+            setLastResponse(stagedMessage);
+            Alert.alert("Approval staged", stagedMessage);
+            await refreshOpenClawStatus({ silent: true });
+            return;
+          }
+          throw new Error(parsed.error || `${failureTitle} failed.`);
+        }
+
+        const output = parsed.output && typeof parsed.output === "object" ? (parsed.output as Record<string, unknown>) : {};
+        const nextSteps = Array.isArray(output.next_steps) ? output.next_steps.map((step) => stringValue(step)).filter(Boolean) : [];
+        const successMessage =
+          stringValue(output.message) ||
+          (nextSteps.length ? `${successTitle}. Next: ${nextSteps[0]}` : `${successTitle}.`);
+        setLastResponse(successMessage);
+        await refreshOpenClawStatus({ silent: true });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        setLastResponse(message);
+        Alert.alert(failureTitle, message);
+      } finally {
+        setOpenclawActionBusy("");
+      }
+    },
+    [desktopPaired, handleToolCall, refreshOpenClawStatus, unwrapToolResult]
+  );
 
   const refreshPhoneMetadataStatus = useCallback(async () => {
     try {
@@ -1155,13 +1271,15 @@ export default function App() {
       setFollowups([]);
       setActivityItems([]);
       setContextMap(null);
+      setOpenclawStatus(null);
       return;
     }
     refreshPendingQueue();
     refreshFollowupQueue();
     refreshActivityFeed();
     refreshContextMap();
-  }, [desktopPaired, refreshPendingQueue, refreshFollowupQueue, refreshActivityFeed, refreshContextMap]);
+    refreshOpenClawStatus({ silent: true });
+  }, [desktopPaired, refreshPendingQueue, refreshFollowupQueue, refreshActivityFeed, refreshContextMap, refreshOpenClawStatus]);
 
   useEffect(() => {
     refreshPhoneMetadataStatus().then((status) => {
@@ -1520,6 +1638,8 @@ export default function App() {
     [currentSkin.recipeIds, desktopPaired]
   );
   const activeModeMeta = PHONE_MODE_META[activeMode];
+  const openclawGatewayRunning = Boolean(openclawStatus?.gateway?.running);
+  const openclawReady = Boolean(openclawStatus?.openclaw_installed) && openclawGatewayRunning;
 
   useEffect(() => {
     if (!availableModes.length || availableModes.includes(activeMode)) {
@@ -1648,6 +1768,163 @@ export default function App() {
               <Text style={styles.secondaryButtonText}>Disconnect</Text>
             </TouchableOpacity>
           </View>
+        </View>
+        ) : null}
+
+        {activeMode === "act" && enabledModules.has("operator_stack") ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Operator stack</Text>
+          <Text style={styles.cardBody}>
+            OpenClaw is Butler&apos;s built-in local operator layer. The phone stays lightweight while your Mac hosts the heavier agent, gateway, and plugin fabric underneath it.
+          </Text>
+          <View style={styles.reviewSummaryRow}>
+            <Text style={styles.reviewSummaryPill}>
+              {openclawStatus?.openclaw_installed ? "OpenClaw ready" : "OpenClaw missing"}
+            </Text>
+            <Text style={styles.reviewSummaryText}>
+              {openclawGatewayRunning ? "Gateway online" : "Gateway not ready"}
+            </Text>
+            <Text style={styles.reviewSummaryText}>
+              {openclawStatus?.rtk_plugin_installed ? "RTK plugin installed" : "RTK optional"}
+            </Text>
+          </View>
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[styles.secondaryButton, openclawBusy && styles.buttonDisabled]}
+              disabled={openclawBusy || openclawActionBusy !== ""}
+              onPress={() => refreshOpenClawStatus()}
+            >
+              <Text style={styles.secondaryButtonText}>{openclawBusy ? "Refreshing..." : "Refresh Stack"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.primaryButton, openclawActionBusy === "install" && styles.buttonDisabled]}
+              disabled={openclawActionBusy !== ""}
+              onPress={() =>
+                runOpenClawAction("install", "install_openclaw", {}, {
+                  successTitle: "OpenClaw install completed",
+                  failureTitle: "OpenClaw install failed",
+                })
+              }
+            >
+              <Text style={styles.primaryButtonText}>
+                {openclawActionBusy === "install" ? "Installing..." : "Install OpenClaw"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[styles.secondaryButton, openclawActionBusy === "gateway" && styles.buttonDisabled]}
+              disabled={openclawActionBusy !== ""}
+              onPress={() =>
+                runOpenClawAction("gateway", "openclaw_gateway_install", {}, {
+                  successTitle: "OpenClaw gateway install completed",
+                  failureTitle: "Gateway install failed",
+                })
+              }
+            >
+              <Text style={styles.secondaryButtonText}>
+                {openclawActionBusy === "gateway" ? "Installing..." : "Install Gateway"}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.secondaryButton, openclawActionBusy === "local-mode" && styles.buttonDisabled]}
+              disabled={openclawActionBusy !== ""}
+              onPress={() =>
+                runOpenClawAction("local-mode", "openclaw_configure_local_gateway", {}, {
+                  successTitle: "OpenClaw local gateway mode configured",
+                  failureTitle: "Local gateway configuration failed",
+                })
+              }
+            >
+              <Text style={styles.secondaryButtonText}>
+                {openclawActionBusy === "local-mode" ? "Configuring..." : "Set Local Mode"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[styles.secondaryButton, openclawActionBusy === "restart" && styles.buttonDisabled]}
+              disabled={openclawActionBusy !== ""}
+              onPress={() =>
+                runOpenClawAction("restart", "openclaw_gateway_restart", {}, {
+                  successTitle: "OpenClaw gateway restart completed",
+                  failureTitle: "Gateway restart failed",
+                })
+              }
+            >
+              <Text style={styles.secondaryButtonText}>
+                {openclawActionBusy === "restart" ? "Restarting..." : "Restart Gateway"}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.secondaryButton, openclawActionBusy === "doctor" && styles.buttonDisabled]}
+              disabled={openclawActionBusy !== ""}
+              onPress={() =>
+                runOpenClawAction("doctor", "openclaw_doctor", { apply_fixes: true }, {
+                  successTitle: "OpenClaw doctor completed",
+                  failureTitle: "OpenClaw doctor failed",
+                })
+              }
+            >
+              <Text style={styles.secondaryButtonText}>
+                {openclawActionBusy === "doctor" ? "Running..." : "Run Doctor"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[styles.secondaryButton, openclawActionBusy === "rtk" && styles.buttonDisabled]}
+              disabled={openclawActionBusy !== ""}
+              onPress={() =>
+                runOpenClawAction("rtk", "install_rtk_openclaw_plugin", {}, {
+                  successTitle: "RTK plugin install staged",
+                  failureTitle: "RTK plugin install failed",
+                })
+              }
+            >
+              <Text style={styles.secondaryButtonText}>
+                {openclawActionBusy === "rtk" ? "Staging..." : "Install RTK Plugin"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          {openclawStatus ? (
+            <View style={styles.sectionGroup}>
+              <Text style={styles.feedMeta}>
+                {openclawReady
+                  ? "Butler's operator stack is online on this Mac."
+                  : openclawStatus.openclaw_installed
+                  ? "OpenClaw is installed, but the gateway still needs attention."
+                  : "OpenClaw is not installed yet on this Mac."}
+              </Text>
+              {openclawStatus.openclaw_version ? (
+                <Text style={styles.feedMeta}>CLI {openclawStatus.openclaw_version}</Text>
+              ) : null}
+              {openclawStatus.node_version ? (
+                <Text style={styles.feedMeta}>Node {openclawStatus.node_version}</Text>
+              ) : null}
+              {openclawStatus.gateway?.summary ? (
+                <Text style={styles.feedMeta}>{openclawStatus.gateway.summary}</Text>
+              ) : null}
+              {!openclawStatus.npm_global_bin_on_path && openclawStatus.npm_global_bin ? (
+                <Text style={styles.captureHint}>
+                  Add {openclawStatus.npm_global_bin} to PATH if your shell still cannot find `openclaw`.
+                </Text>
+              ) : null}
+              {openclawStatus.suggested_steps?.length ? (
+                <View style={styles.pendingList}>
+                  {openclawStatus.suggested_steps.map((step) => (
+                    <View key={step} style={styles.pendingRow}>
+                      <Text style={styles.pendingContent}>{step}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          ) : (
+            <Text style={styles.captureHint}>
+              Butler will check the stack on the paired Mac and keep the current gateway status here.
+            </Text>
+          )}
         </View>
         ) : null}
 

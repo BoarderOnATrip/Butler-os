@@ -48,6 +48,14 @@ export const RECIPES = {
     mode: "assist",
     prompt: "Bring Butler back online by checking core secret status and restoring recoverable intelligence credentials from Maccy.",
   },
+  "enable-operator-stack": {
+    id: "enable-operator-stack",
+    label: "Enable Operator Stack",
+    summary: "Check OpenClaw on the paired Mac, install it if needed, and bring the gateway online for Butler.",
+    requiresPairing: true,
+    mode: "assist",
+    prompt: "Get OpenClaw online on this Mac by checking the operator stack, installing OpenClaw if needed, and installing the gateway.",
+  },
 } satisfies Record<string, QuickActionRecipe>;
 
 export type RecipeId = keyof typeof RECIPES;
