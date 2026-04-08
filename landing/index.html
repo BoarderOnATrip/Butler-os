@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>aiButler — The AI Butler Who Can Manage Your Life</title>
+  <meta
+    name="description"
+    content="aiButler is a phone-first AI butler and CRM companion that remembers people, manages follow-ups, and safely acts across your digital world."
+  />
+  <style>
+    :root {
+      --bg: #0a0e15;
+      --bg-soft: #111722;
+      --panel: rgba(17, 23, 34, 0.82);
+      --line: rgba(255, 255, 255, 0.08);
+      --text: #eff4fb;
+      --muted: #9aa6b8;
+      --cyan: #56d8ff;
+      --mint: #68f3be;
+      --gold: #f5c57a;
+      --shadow: 0 30px 90px rgba(0, 0, 0, 0.42);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "SF Pro Display", "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(86, 216, 255, 0.16), transparent 28%),
+        radial-gradient(circle at top right, rgba(104, 243, 190, 0.14), transparent 28%),
+        linear-gradient(180deg, #081018 0%, #0d1320 45%, #090d14 100%);
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    .shell {
+      width: min(1180px, calc(100% - 48px));
+      margin: 0 auto;
+    }
+
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 24px 0;
+    }
+
+    .logo {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .logo span { color: var(--mint); }
+
+    .nav-links {
+      display: flex;
+      gap: 22px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .hero {
+      padding: 56px 0 68px;
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 36px;
+      align-items: stretch;
+    }
+
+    .hero-copy {
+      padding: 12px 0;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 999px;
+      padding: 8px 14px;
+      color: var(--mint);
+      font-size: 0.8rem;
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(3.1rem, 7vw, 6rem);
+      line-height: 0.94;
+      letter-spacing: -0.05em;
+      max-width: 10ch;
+    }
+
+    .hero-copy p {
+      max-width: 58ch;
+      font-size: 1.08rem;
+      line-height: 1.8;
+      color: var(--muted);
+      margin: 24px 0 0;
+    }
+
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 34px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      padding: 14px 20px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      transition: transform 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      opacity: 0.96;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--mint), var(--cyan));
+      color: #031018;
+      box-shadow: 0 12px 40px rgba(86, 216, 255, 0.18);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.03);
+      border-color: var(--line);
+      color: var(--text);
+    }
+
+    .hero-card {
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background:
+        radial-gradient(circle at top right, rgba(245, 197, 122, 0.14), transparent 30%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+      box-shadow: var(--shadow);
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      min-height: 100%;
+    }
+
+    .mini-label {
+      color: var(--gold);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+
+    .card-title {
+      font-size: 1.6rem;
+      line-height: 1.15;
+      margin: 0;
+    }
+
+    .card-body {
+      color: var(--muted);
+      line-height: 1.75;
+      font-size: 0.96rem;
+    }
+
+    .conversation {
+      display: grid;
+      gap: 12px;
+      margin-top: 6px;
+    }
+
+    .bubble {
+      border-radius: 20px;
+      padding: 14px 16px;
+      line-height: 1.55;
+      font-size: 0.94rem;
+    }
+
+    .bubble-user {
+      background: rgba(86, 216, 255, 0.1);
+      border: 1px solid rgba(86, 216, 255, 0.16);
+    }
+
+    .bubble-ai {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--line);
+    }
+
+    .section {
+      padding: 34px 0 72px;
+    }
+
+    .section-head {
+      max-width: 760px;
+      margin-bottom: 28px;
+    }
+
+    .section-head h2 {
+      margin: 0 0 12px;
+      font-size: clamp(2rem, 4vw, 3rem);
+      letter-spacing: -0.04em;
+    }
+
+    .section-head p {
+      color: var(--muted);
+      line-height: 1.8;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: var(--panel);
+      padding: 22px;
+      backdrop-filter: blur(24px);
+    }
+
+    .panel h3 {
+      margin: 0 0 10px;
+      font-size: 1.15rem;
+    }
+
+    .panel p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.72;
+      font-size: 0.95rem;
+    }
+
+    .stack {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .profile-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      line-height: 1.9;
+    }
+
+    .footer {
+      padding: 30px 0 50px;
+      color: var(--muted);
+      font-size: 0.94rem;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    @media (max-width: 920px) {
+      .hero,
+      .grid,
+      .stack,
+      .footer {
+        grid-template-columns: 1fr;
+        display: grid;
+      }
+
+      .nav {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 16px;
+      }
+
+      .nav-links {
+        flex-wrap: wrap;
+      }
+
+      h1 {
+        max-width: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav class="nav">
+      <div class="logo">ai<span>Butler</span></div>
+      <div class="nav-links">
+        <a href="#positioning">Positioning</a>
+        <a href="#experience">Experience</a>
+        <a href="#profile">Profile</a>
+        <a href="https://github.com/aibutler/aibutler.me">GitHub</a>
+      </div>
+    </nav>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow">Phone-first AI companion</div>
+        <h1>The AI butler who can manage your life.</h1>
+        <p>
+          aiButler is a personal chief of staff with a CRM brain. It helps you keep track of people,
+          priorities, follow-ups, and momentum from your phone, then routes trusted work through your
+          local desktop runtime when it is time to act.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com/aibutler/aibutler.me">Open Build On GitHub</a>
+          <a class="btn btn-secondary" href="https://github.com/aibutler/aibutler/blob/main/docs/PRODUCT_PROFILE.md">Read Product Profile</a>
+        </div>
+      </div>
+
+      <div class="hero-card">
+        <div class="mini-label">What the product feels like</div>
+        <h2 class="card-title">Not another chatbot. A life-management layer.</h2>
+        <div class="card-body">
+          The brand is <strong>aiButler</strong>. The clone, avatar, and voice copy are capabilities inside it, not the whole story.
+          The phone is the daily surface. The desktop is the trusted operator.
+        </div>
+        <div class="conversation">
+          <div class="bubble bubble-user">Who do I owe a follow-up to today?</div>
+          <div class="bubble bubble-ai">You have 3 people at risk of going cold. I drafted the next messages and queued the desktop work for approval.</div>
+          <div class="bubble bubble-user">Handle the admin after I approve it.</div>
+          <div class="bubble bubble-ai">Done. I’ll keep the receipts and move the relationship timeline forward.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="positioning" class="section">
+      <div class="section-head">
+        <h2>Why the name should stay aiButler</h2>
+        <p>
+          `aiButler` is the strongest master brand because it says exactly what the product does while leaving room for voice clone,
+          avatar, CRM, and specialist agent workflows. `Butler Clone` is too narrow. `Mira` is better used as a specialist sales agent
+          inside the Butler system, not as the public brand for the whole product.
+        </p>
+      </div>
+
+      <div class="grid">
+        <div class="panel">
+          <h3>Master brand</h3>
+          <p>`aiButler` is the product. It should own the public narrative, the domain, and the repository identity.</p>
+        </div>
+        <div class="panel">
+          <h3>Specialist agent</h3>
+          <p>`Mira` can continue as the sales and outreach employee that lives inside Butler rather than competing with it.</p>
+        </div>
+        <div class="panel">
+          <h3>Feature layer</h3>
+          <p>The clone, avatar, and voice likeness are premium capabilities inside aiButler, not the product category itself.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="experience" class="section">
+      <div class="section-head">
+        <h2>What aiButler is becoming</h2>
+        <p>
+          A phone-first AI companion that behaves like a personal operator: it remembers context, keeps relationships warm,
+          protects your time, and can safely act through a trusted local runtime.
+        </p>
+      </div>
+
+      <div class="stack">
+        <div class="panel">
+          <h3>Phone-native companion</h3>
+          <p>
+            Your phone is the daily Butler surface for briefings, approvals, relationship memory, follow-up planning, and quick actions.
+          </p>
+        </div>
+        <div class="panel">
+          <h3>Trusted local operator</h3>
+          <p>
+            Your desktop handles secrets, files, supervised computer use, and high-trust execution through approvals and receipts.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="profile" class="section">
+      <div class="section-head">
+        <h2>Recommended brand architecture</h2>
+        <p>
+          Keep the naming stack simple so users, contributors, and future customers understand the system immediately.
+        </p>
+      </div>
+
+      <div class="grid">
+        <div class="panel">
+          <h3>Public naming</h3>
+          <ul class="profile-list">
+            <li>Product: <strong>aiButler</strong></li>
+            <li>Domain: <strong>aiButler.me</strong></li>
+            <li>Repo: <strong>aibutler</strong></li>
+            <li>Tagline: <strong>The AI butler who can manage your life.</strong></li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Internal product layers</h3>
+          <ul class="profile-list">
+            <li>Butler Mobile</li>
+            <li>Butler Desktop</li>
+            <li>Butler Runtime</li>
+            <li>Mira for sales and outreach</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>What to avoid</h3>
+          <ul class="profile-list">
+            <li>Do not lead with “clone” as the category</li>
+            <li>Do not make Mira the umbrella brand</li>
+            <li>Do not position this as just another assistant chat app</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div>aiButler · phone-first AI companion · approval-first by default</div>
+      <div>
+        <a href="https://github.com/aibutler/aibutler.me">GitHub</a>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

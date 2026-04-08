@@ -1,0 +1,86 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+pip-wheel-metadata/
+
+# Node / JS
+node_modules/
+.npm
+.pnpm-store/
+dist/
+.svelte-kit/
+.vite/
+
+# Rust / Tauri
+target/
+desktop/src-tauri/WixTools/
+desktop/src-tauri/aibutler-runtime
+*.exe
+
+# Expo / React Native
+.expo/
+.expo-shared/
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.log
+*.secret
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*.iml
+
+# Build artifacts
+aibutler-core/bin/
+aibutler-core/dist/
+aibutler-core/build/
+*.spec
+
+# Runtime data
+.aibutler/
+
+# Local-only workspace material not meant for the public repo
+AI Clone/
+AShoulderTo.com/
+My Ai Butler and Me.scriv/
+Public Speaking aiButler.me/
+Sales/
+Vision Claw/
+Voice Assistant/
+Website/
+Youtube Downloader app/
+*.code-workspace
+*.docx
+*.mov
+*.MOV
+*.mp3
+*.pptx
+*.wav
+*.zip

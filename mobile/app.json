@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "aiButler",
+    "slug": "aibutler",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0a0a0f"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "me.aibutler.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "aiButler needs camera access to capture receipts and artifacts into pending context.",
+        "NSPhotoLibraryUsageDescription": "aiButler needs photo library access to turn existing images into pending context captures.",
+        "NSMicrophoneUsageDescription": "aiButler needs microphone access for voice commands.",
+        "NSSpeechRecognitionUsageDescription": "aiButler uses speech recognition for voice commands."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0f"
+      },
+      "package": "me.aibutler.app",
+      "permissions": [
+        "RECORD_AUDIO",
+        "INTERNET",
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "READ_CALL_LOG",
+        "READ_SMS"
+      ]
+    },
+    "plugins": [
+      "expo-av",
+      "expo-image-picker",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "16.0"
+          }
+        }
+      ]
+    ]
+  }
+}
