@@ -153,6 +153,43 @@ class ButlerCoreAgent:
         if any(
             phrase in prompt_lower
             for phrase in (
+                "rtk",
+                "token optimizer",
+                "token optimisation",
+                "token optimization",
+                "openclaw plugin",
+                "rewrite shell command",
+                "rewrite command",
+            )
+        ):
+            return {
+                "mode": "rtk_status",
+                "tool_calls": [
+                    {"tool": "rtk_status", "args": {}},
+                ],
+            }
+
+        if any(
+            phrase in prompt_lower
+            for phrase in (
+                "install rtk",
+                "integrate rtk",
+                "enable rtk",
+                "install rtk plugin",
+                "install openclaw plugin",
+            )
+        ):
+            return {
+                "mode": "rtk_install",
+                "tool_calls": [
+                    {"tool": "rtk_status", "args": {}},
+                    {"tool": "install_rtk_openclaw_plugin", "args": {}},
+                ],
+            }
+
+        if any(
+            phrase in prompt_lower
+            for phrase in (
                 "owe a reply",
                 "follow up",
                 "follow-up",
@@ -272,6 +309,29 @@ class ButlerCoreAgent:
             if already_ready:
                 return "Butler is online. Existing stored credentials were re-injected into the runtime.", []
             return "No missing intelligence secrets needed recovery.", []
+
+        if mode == "rtk_status":
+            status = dict(output or {})
+            if not status.get("rtk_installed"):
+                return "RTK is not installed yet. Butler can still vendor the OpenClaw plugin, but you still need the `rtk` binary on PATH.", []
+            if status.get("plugin_installed"):
+                return "RTK is installed and the OpenClaw rewrite plugin is already in place. Restart OpenClaw if you want the hook to take effect immediately.", []
+            return "RTK is installed, but the OpenClaw rewrite plugin is not installed yet. Butler can stage that installation for you.", []
+
+        if mode == "rtk_install":
+            install_result = tool_results[1]["result"] if len(tool_results) > 1 else {}
+            if install_result and not install_result.get("ok", True):
+                approval_id = install_result.get("approval_request_id")
+                if approval_id:
+                    return (
+                        f"RTK plugin installation is staged. Approve `install_rtk_openclaw_plugin` to drop the Butler-vendored plugin into your OpenClaw extensions directory. Approval id: {approval_id}.",
+                        [],
+                    )
+                return (install_result.get("error") or "RTK plugin installation failed.", [])
+
+            install_output = install_result.get("output") if isinstance(install_result, dict) else {}
+            plugin_dir = (install_output or {}).get("plugin_dir") or "~/.openclaw/extensions/rtk-rewrite"
+            return f"RTK's OpenClaw rewrite plugin is installed at {plugin_dir}. Restart OpenClaw and make sure the `rtk` binary is on PATH.", []
 
         if mode == "relationship_briefing":
             priorities = list((output or {}).get("priority_followups") or [])

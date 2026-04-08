@@ -58,6 +58,33 @@ export const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "rtk_status",
+      description: "Check whether RTK and Butler's vendored OpenClaw rewrite plugin are installed and ready.",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "install_rtk_openclaw_plugin",
+      description: "Install Butler's vendored RTK rewrite plugin into the local OpenClaw extensions directory.",
+      parameters: {
+        type: "object",
+        properties: {
+          target_dir: {
+            type: "string",
+            description: "Optional override for the destination plugin directory.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "capture_screen",
       description: "Capture a screenshot of the current screen and return the saved file path.",
       parameters: {

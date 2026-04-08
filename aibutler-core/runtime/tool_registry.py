@@ -14,6 +14,7 @@ from tools.secrets import TOOLS as SECRET_TOOLS
 from tools.life_data import TOOLS as LIFE_DATA_TOOLS
 from tools.context_tools import TOOLS as CONTEXT_TOOLS
 from tools.relationship_tools import TOOLS as RELATIONSHIP_TOOLS
+from tools.rtk_tools import TOOLS as RTK_TOOLS
 
 DEFAULT_TOOL_META = {
     "category": "general",
@@ -409,6 +410,30 @@ TOOL_META = {
         "risk": "low",
         "reversible": False,
     },
+    "rtk_status": {
+        "category": "integrations",
+        "capability": "general",
+        "read_only": True,
+        "risk": "low",
+    },
+    "rtk_rewrite_preview": {
+        "category": "integrations",
+        "capability": "general",
+        "read_only": True,
+        "risk": "low",
+    },
+    "rtk_gain_summary": {
+        "category": "integrations",
+        "capability": "general",
+        "read_only": True,
+        "risk": "low",
+    },
+    "install_rtk_openclaw_plugin": {
+        "category": "integrations",
+        "capability": "general",
+        "risk": "medium",
+        "approval": ApprovalPolicy(required=True, reason="installs OpenClaw plugin files into the local user profile"),
+    },
 }
 
 
@@ -422,6 +447,7 @@ def _iter_raw_tools() -> dict:
         **LIFE_DATA_TOOLS,
         **CONTEXT_TOOLS,
         **RELATIONSHIP_TOOLS,
+        **RTK_TOOLS,
         **plugin_tools,
     }
 

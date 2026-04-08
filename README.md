@@ -51,6 +51,7 @@ The first strong user stories are:
 - supervised computer-use tools on macOS
 - secure bridge pairing token model for mobile-to-desktop access
 - phone UI for pairing, briefings, and quick-action Butler workflows
+- optional RTK/OpenClaw integration tooling for shell-output token reduction in agent flows
 
 ## What is still in progress
 
@@ -76,6 +77,23 @@ cd bridge && AIBUTLER_BRIDGE_ALLOW_LAN=1 python server.py
 ```
 
 For first-run product setup, start the desktop app and use the onboarding flow instead of exporting secrets in the terminal.
+
+## Optional RTK Integration
+
+Butler now vendors the RTK rewrite plugin for OpenClaw under [integrations/openclaw/rtk-rewrite](integrations/openclaw/rtk-rewrite).
+
+The runtime can:
+
+- inspect RTK/OpenClaw readiness via `rtk_status`
+- preview command rewrites via `rtk_rewrite_preview`
+- show RTK gain stats via `rtk_gain_summary`
+- install the vendored plugin via `install_rtk_openclaw_plugin`
+
+RTK itself is still an external binary. Install it separately with:
+
+```bash
+brew install rtk
+```
 
 ## Public repo principles
 
