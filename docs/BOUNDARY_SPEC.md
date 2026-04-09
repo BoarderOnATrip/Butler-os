@@ -2,6 +2,8 @@
 
 Date: 2026-04-09
 
+This file is the canonical boundary contract. Any other boundary notes or copies in other repos or workspace roots are derivative and should be deleted or treated as mirrors once synced.
+
 ## Purpose
 
 This document defines the working boundary between:
@@ -43,6 +45,8 @@ That means:
 
 `DewDrops` may cache and render these objects, but it should not mint competing canonical IDs for them.
 
+During prototype work, DewDrops may still carry local placeholder IDs or temporary React-state objects. Those are explicitly non-canonical until Butler issues real IDs and version handles.
+
 ## Ownership Split
 
 | Topic | Canonical owner | Consumer / secondary owner |
@@ -56,6 +60,8 @@ That means:
 | Publish/version policy | Butler-os | DewDrops respects it |
 | Lifegirdle schemas | Shared model | Both consume |
 | Artifact blobs and canonical URLs | Butler-os | DewDrops references |
+
+Rooms are canonical in Butler. Identity, lifecycle, membership, policy, and publish semantics live there even when DewDrops renders a richer desktop projection.
 
 ## Canonical Object Types
 
@@ -247,6 +253,13 @@ Rules:
 - Butler may later move physical storage, but canonical URLs must stay stable
 - no duplicate desktop-only and phone-only blob pipelines
 
+## Boards Vs Rooms
+
+- A Butler `room` is the canonical context container with stable identity, policy, and draft/publish lifecycle.
+- A DewDrops `board` is a richer spatial projection that may reference one or more `room_id` values.
+- Extra layout or view-state may live as Butler-approved artifacts or a future dedicated view-state record, but it must not fork canonical identity.
+- DewDrops may render a room however it wants, but it should not create a second room model with separate lifecycle rules.
+
 ## DewDrops Contract
 
 `DewDrops` may:
@@ -313,3 +326,11 @@ Near-term work should follow this order:
 3. let DewDrops consume Butler room IDs and artifact URLs
 4. add versioned draft/publish state before rich team editing
 5. only then add deeper collaborative canvas behavior
+
+## Open Decisions
+
+These remain intentionally unresolved and should be tracked against this spec rather than solved independently in multiple repos:
+
+- whether rich board layout lives as a standard Butler artifact or a dedicated Butler-managed view-state record
+- whether fork semantics are personal drafts, named branches, or copy-on-write variants
+- whether comments are modeled as append-only thread artifacts or a more structured activity stream
