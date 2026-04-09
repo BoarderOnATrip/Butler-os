@@ -42,17 +42,21 @@ import {
   captureContext,
   claimContinuityPacket,
   clearBridgePairing,
+  createRoom,
   discoverDesktop,
   executeTool,
   getDesktopClipboard,
+  listRooms,
   isConnected,
   listContinuityInbox,
   pairDesktop,
+  publishRoomVersion,
   pushContinuityPacket,
   restoreBridgePairing,
   runCoreAgent,
   runAgentic,
   setDesktopClipboard,
+  type ButlerRoom,
   type ContinuityPacket,
 } from "./lib/bridge";
 
@@ -492,6 +496,12 @@ export default function App() {
   const [continuityActionBusy, setContinuityActionBusy] = useState("");
   const [continuityTitle, setContinuityTitle] = useState("Quick handoff");
   const [continuityNote, setContinuityNote] = useState("");
+  const [rooms, setRooms] = useState<ButlerRoom[]>([]);
+  const [roomsBusy, setRoomsBusy] = useState(false);
+  const [roomActionBusy, setRoomActionBusy] = useState("");
+  const [roomTitle, setRoomTitle] = useState("");
+  const [roomKind, setRoomKind] = useState("project");
+  const [roomSeedNote, setRoomSeedNote] = useState("");
   const conversationRef = useRef<any>(null);
 
   useEffect(() => {
@@ -936,7 +946,7 @@ export default function App() {
 
     setContinuityBusy(true);
     try {
-      const packets = await listContinuityInbox("phone", undefined, 10, true);
+      const packets = await listContinuityInbox("phone", undefined, 10, false);
       setContinuityItems(packets);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1058,6 +1068,102 @@ export default function App() {
       Alert.alert("Copy failed", message);
     } finally {
       setContinuityActionBusy("");
+    }
+  }, [refreshContinuityInbox]);
+
+  const refreshRooms = useCallback(async (options?: { silent?: boolean }) => {
+    if (!desktopPaired) {
+      setRooms([]);
+      return;
+    }
+
+    setRoomsBusy(true);
+    try {
+      const nextRooms = await listRooms(undefined, 8);
+      setRooms(nextRooms);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLastResponse(message);
+      if (!options?.silent) {
+        Alert.alert("Room refresh failed", message);
+      }
+    } finally {
+      setRoomsBusy(false);
+    }
+  }, [desktopPaired]);
+
+  const handleCreateRoom = useCallback(async () => {
+    if (!desktopPaired) {
+      Alert.alert("Mac not paired", "Pair your Mac first so Butler can create canonical rooms.");
+      return;
+    }
+    const title = compactText(roomTitle);
+    if (!title) {
+      Alert.alert("Missing room title", "Give this room a short title first.");
+      return;
+    }
+
+    setRoomActionBusy("create-room");
+    try {
+      const result = await createRoom({
+        kind: roomKind,
+        title,
+        metadata: {
+          source_surface: "mobile.act.rooms",
+          seeded_from_phone: true,
+        },
+        initial_payload: {
+          title,
+          kind: roomKind,
+          note: roomSeedNote.trim(),
+        },
+        created_by: "mobile",
+      });
+      const createdRoom = result.room;
+      const createdDraft = result.draft;
+      if (createdDraft?.version_id) {
+        await publishRoomVersion(createdDraft.version_id, "mobile");
+      }
+      setRoomTitle("");
+      setRoomSeedNote("");
+      setLastResponse(createdRoom?.title ? `Canonical room ready: ${createdRoom.title}.` : "Canonical room created.");
+      await refreshRooms({ silent: true });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLastResponse(message);
+      Alert.alert("Room creation failed", message);
+    } finally {
+      setRoomActionBusy("");
+    }
+  }, [createRoom, desktopPaired, publishRoomVersion, refreshRooms, roomKind, roomSeedNote, roomTitle]);
+
+  const handleSendRoomToMac = useCallback(async (room: ButlerRoom) => {
+    setRoomActionBusy(`handoff-room:${room.room_id}`);
+    try {
+      await pushContinuityPacket({
+        kind: "room_ref",
+        title: `Open room: ${room.title}`,
+        content: room.title,
+        target_device: "desktop",
+        source_device: "phone",
+        source_surface: "mobile.act.rooms",
+        room_id: room.room_id,
+        refs: [`rooms/${room.room_id}`, ...(room.source_refs ?? [])],
+        metadata: {
+          action: "open_room",
+          room_kind: room.kind,
+          room_title: room.title,
+        },
+        expires_in_minutes: 240,
+      });
+      setLastResponse(`Room queued for your Mac: ${room.title}.`);
+      await refreshContinuityInbox({ silent: true });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLastResponse(message);
+      Alert.alert("Room handoff failed", message);
+    } finally {
+      setRoomActionBusy("");
     }
   }, [refreshContinuityInbox]);
 
@@ -1489,6 +1595,7 @@ export default function App() {
       setContextMap(null);
       setOpenclawStatus(null);
       setContinuityItems([]);
+      setRooms([]);
       return;
     }
     refreshPendingQueue();
@@ -1497,7 +1604,8 @@ export default function App() {
     refreshContextMap();
     refreshOpenClawStatus({ silent: true });
     refreshContinuityInbox({ silent: true });
-  }, [desktopPaired, refreshPendingQueue, refreshFollowupQueue, refreshActivityFeed, refreshContextMap, refreshOpenClawStatus, refreshContinuityInbox]);
+    refreshRooms({ silent: true });
+  }, [desktopPaired, refreshPendingQueue, refreshFollowupQueue, refreshActivityFeed, refreshContextMap, refreshOpenClawStatus, refreshContinuityInbox, refreshRooms]);
 
   useEffect(() => {
     refreshPhoneMetadataStatus().then((status) => {
@@ -1818,6 +1926,11 @@ export default function App() {
       ? "#ff5d73"
       : "#7f8ba1";
 
+  const liveContinuityItems = useMemo(
+    () => continuityItems.filter((item) => item.status !== "consumed"),
+    [continuityItems]
+  );
+
   const reviewPendingItems = [...pendingItems].sort((left, right) => {
     const rank = (status?: ReviewStatus) => {
       switch (status) {
@@ -1920,13 +2033,21 @@ export default function App() {
           {availableModes.map((typedMode) => {
             const meta = PHONE_MODE_META[typedMode];
             const active = typedMode === activeMode;
+            const badgeCount =
+              typedMode === "review"
+                ? activePendingCount
+                : typedMode === "act"
+                ? liveContinuityItems.length
+                : 0;
             return (
               <TouchableOpacity
                 key={typedMode}
                 style={[styles.modeChip, active && styles.modeChipActive, active && { borderColor: currentSkin.accent }]}
                 onPress={() => setActiveMode(typedMode)}
               >
-                <Text style={[styles.modeChipText, active && styles.modeChipTextActive]}>{meta.label}</Text>
+                <Text style={[styles.modeChipText, active && styles.modeChipTextActive]}>
+                  {badgeCount > 0 ? `${meta.label} · ${badgeCount}` : meta.label}
+                </Text>
               </TouchableOpacity>
             );
           })}
@@ -2017,8 +2138,8 @@ export default function App() {
               {desktopPaired ? "Bridge online" : "Bridge offline"}
             </Text>
             <Text style={styles.reviewSummaryText}>
-              {continuityItems.filter((item) => item.status !== "consumed").length} live packet
-              {continuityItems.filter((item) => item.status !== "consumed").length === 1 ? "" : "s"}
+              {liveContinuityItems.length} live packet
+              {liveContinuityItems.length === 1 ? "" : "s"}
             </Text>
           </View>
           <View style={styles.buttonRow}>
@@ -2100,6 +2221,16 @@ export default function App() {
                       </Text>
                     </View>
                   </View>
+                  {packet.room_id ? <Text style={styles.feedMeta}>Room {packet.room_id}</Text> : null}
+                  {packet.lease_owner ? (
+                    <Text style={styles.feedMeta}>
+                      Claimed by {packet.lease_owner}
+                      {packet.lease_expires_at ? ` until ${formatMetadataTimestamp(packet.lease_expires_at)}` : ""}
+                    </Text>
+                  ) : null}
+                  {packet.refs?.length ? (
+                    <Text style={styles.feedMeta}>Refs {packet.refs.slice(0, 3).join(" · ")}</Text>
+                  ) : null}
                   {packet.content ? (
                     <Text style={styles.pendingContent} numberOfLines={3}>
                       {packet.content}
@@ -2133,6 +2264,107 @@ export default function App() {
           ) : (
             <Text style={styles.captureHint}>
               No handoff packets yet. Start by sending a clipboard snippet or quick note to your Mac.
+            </Text>
+          )}
+        </View>
+        ) : null}
+
+        {activeMode === "act" && enabledModules.has("room_workspace") ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Canonical rooms</Text>
+          <Text style={styles.cardBody}>
+            Rooms are now first-class Butler objects. Create them here, then hand them to the Mac or DewDrops without inventing separate IDs or desktop-only state.
+          </Text>
+          <View style={styles.reviewSummaryRow}>
+            <Text style={[styles.metaBadge, desktopPaired ? styles.metaBadgeReady : styles.metaBadgeBlocked]}>
+              {desktopPaired ? "Room API online" : "Pairing required"}
+            </Text>
+            <Text style={styles.reviewSummaryText}>{rooms.length} recent room{rooms.length === 1 ? "" : "s"}</Text>
+          </View>
+          <TextInput
+            autoCapitalize="sentences"
+            autoCorrect
+            placeholder="Room title"
+            placeholderTextColor="#5f6b84"
+            style={styles.input}
+            value={roomTitle}
+            onChangeText={setRoomTitle}
+          />
+          <View style={styles.buttonRow}>
+            {["project", "person", "conversation"].map((kind) => {
+              const active = roomKind === kind;
+              return (
+                <TouchableOpacity
+                  key={kind}
+                  style={[styles.secondaryButton, active && { borderColor: currentSkin.accent }]}
+                  onPress={() => setRoomKind(kind)}
+                >
+                  <Text style={styles.secondaryButtonText}>{kind}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <TextInput
+            autoCapitalize="sentences"
+            autoCorrect
+            multiline
+            placeholder="Seed note for the first draft version"
+            placeholderTextColor="#5f6b84"
+            style={[styles.input, styles.textArea]}
+            value={roomSeedNote}
+            onChangeText={setRoomSeedNote}
+          />
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[styles.secondaryButton, roomsBusy && styles.buttonDisabled]}
+              disabled={!desktopPaired || roomsBusy || roomActionBusy !== ""}
+              onPress={() => refreshRooms()}
+            >
+              <Text style={styles.secondaryButtonText}>{roomsBusy ? "Refreshing..." : "Refresh Rooms"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.primaryButton, roomActionBusy === "create-room" && styles.buttonDisabled]}
+              disabled={!desktopPaired || roomActionBusy !== ""}
+              onPress={handleCreateRoom}
+            >
+              <Text style={styles.primaryButtonText}>
+                {roomActionBusy === "create-room" ? "Creating..." : "Create Room"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          {rooms.length ? (
+            <View style={styles.pendingList}>
+              {rooms.map((room) => (
+                <View key={room.room_id} style={styles.pendingRow}>
+                  <View style={styles.pendingHeaderRow}>
+                    <View style={styles.pendingMeta}>
+                      <Text style={styles.pendingTitle}>{room.title}</Text>
+                      <Text style={styles.pendingKind}>
+                        {[room.kind, room.status, room.current_published_version ? "published" : "draft-only"].filter(Boolean).join(" • ")}
+                      </Text>
+                    </View>
+                  </View>
+                  {room.source_refs?.length ? (
+                    <Text style={styles.feedMeta}>Refs {room.source_refs.slice(0, 3).join(" · ")}</Text>
+                  ) : null}
+                  <Text style={styles.feedMeta}>ID {room.room_id}</Text>
+                  <View style={styles.buttonRow}>
+                    <TouchableOpacity
+                      style={[styles.secondaryButton, roomActionBusy === `handoff-room:${room.room_id}` && styles.buttonDisabled]}
+                      disabled={!desktopPaired || roomActionBusy !== ""}
+                      onPress={() => handleSendRoomToMac(room)}
+                    >
+                      <Text style={styles.secondaryButtonText}>
+                        {roomActionBusy === `handoff-room:${room.room_id}` ? "Sending..." : "Send To Mac"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.captureHint}>
+              No canonical rooms yet. Create one here to start the real Butler/DewDrops seam.
             </Text>
           )}
         </View>

@@ -53,6 +53,7 @@ const CORE_MODULES: ModuleId[] = [
   "hero_brief",
   "pairing",
   "operator_stack",
+  "room_workspace",
   "voice",
   "recipes",
   "review_lane",
@@ -93,6 +94,7 @@ export const FOUNDER_SKIN: PhoneSkinManifest = {
   moduleIds: [
     "hero_brief",
     "pairing",
+    "room_workspace",
     "voice",
     "recipes",
     "review_lane",
@@ -116,6 +118,7 @@ export const BUTLER_LITE_SKIN: PhoneSkinManifest = {
     "hero_brief",
     "pairing",
     "operator_stack",
+    "room_workspace",
     "recipes",
     "review_lane",
     "capture_pending",

@@ -19,8 +19,11 @@ from uuid import uuid4
 from runtime.context_repository import ContextRepository
 from runtime.models import (
     ApprovalRequest,
+    ButlerArtifact,
+    ButlerRoom,
     ButlerSession,
     ButlerTask,
+    ButlerVersion,
     CapabilityGrant,
     ContinuityPacket,
     ContextEvent,
@@ -93,6 +96,27 @@ class ButlerRuntime:
 
     def _save_continuity_packets(self, packets: list[ContinuityPacket]) -> None:
         self.store.save_json("continuity_packets.json", [packet.to_dict() for packet in packets])
+
+    def _load_rooms(self) -> list[ButlerRoom]:
+        data = self.store.load_json("rooms.json", [])
+        return [ButlerRoom.from_dict(row) for row in data]
+
+    def _save_rooms(self, rooms: list[ButlerRoom]) -> None:
+        self.store.save_json("rooms.json", [room.to_dict() for room in rooms])
+
+    def _load_room_artifacts(self) -> list[ButlerArtifact]:
+        data = self.store.load_json("room_artifacts.json", [])
+        return [ButlerArtifact.from_dict(row) for row in data]
+
+    def _save_room_artifacts(self, artifacts: list[ButlerArtifact]) -> None:
+        self.store.save_json("room_artifacts.json", [artifact.to_dict() for artifact in artifacts])
+
+    def _load_room_versions(self) -> list[ButlerVersion]:
+        data = self.store.load_json("room_versions.json", [])
+        return [ButlerVersion.from_dict(row) for row in data]
+
+    def _save_room_versions(self, versions: list[ButlerVersion]) -> None:
+        self.store.save_json("room_versions.json", [version.to_dict() for version in versions])
 
     def _write_continuity_event(self, payload: dict) -> str:
         path = self.store.append_jsonl("continuity_events.jsonl", payload)
@@ -462,6 +486,285 @@ class ButlerRuntime:
         return approvals
 
     # ──────────────────────────────────────────────────────────────────────
+    # Rooms, artifacts, and versions
+    # ──────────────────────────────────────────────────────────────────────
+
+    def create_room(
+        self,
+        *,
+        kind: str,
+        title: str,
+        status: str = "active",
+        metadata: dict | None = None,
+        source_refs: list[str] | None = None,
+        initial_payload: dict | None = None,
+        created_by: str = "runtime",
+        session_id: str | None = None,
+    ) -> ButlerRoom:
+        now = utc_now()
+        room = ButlerRoom(
+            id=_make_id("room"),
+            kind=kind.strip().lower() or "general",
+            title=title.strip() or "Untitled room",
+            status=status.strip().lower() or "active",
+            metadata=copy.deepcopy(metadata or {}),
+            source_refs=list(source_refs or []),
+            created_at=now,
+            updated_at=now,
+        )
+        version = ButlerVersion(
+            id=_make_id("version"),
+            room_id=room.id,
+            state_kind="room_state",
+            payload=copy.deepcopy(
+                initial_payload
+                or {
+                    "title": room.title,
+                    "kind": room.kind,
+                    "status": room.status,
+                    "metadata": room.metadata,
+                    "source_refs": room.source_refs,
+                }
+            ),
+            metadata={"created_from": "room.create"},
+            created_by=created_by,
+            status="draft",
+            created_at=now,
+        )
+        room.current_draft_version_id = version.id
+
+        rooms = self._load_rooms()
+        rooms.append(room)
+        self._save_rooms(rooms)
+
+        versions = self._load_room_versions()
+        versions.append(version)
+        self._save_room_versions(versions)
+
+        self.append_context_event(
+            event_type="room.created",
+            summary=f"Created {room.kind} room {room.title}",
+            payload={
+                "room_id": room.id,
+                "kind": room.kind,
+                "draft_version_id": version.id,
+            },
+            entity_refs=[f"rooms/{room.id}", *room.source_refs],
+            session_id=session_id,
+        )
+        if session_id:
+            self.touch_session(session_id)
+        return room
+
+    def get_room(self, room_id: str) -> ButlerRoom | None:
+        for room in self._load_rooms():
+            if room.id == room_id:
+                return room
+        return None
+
+    def list_rooms(self, *, kind: str | None = None, limit: int = 50) -> list[ButlerRoom]:
+        rooms = self._load_rooms()
+        if kind:
+            rooms = [room for room in rooms if room.kind == kind.strip().lower()]
+        rooms.sort(key=lambda room: room.updated_at or room.created_at, reverse=True)
+        return rooms[:limit]
+
+    def attach_room_artifact(
+        self,
+        room_id: str,
+        *,
+        artifact_kind: str,
+        artifact_url: str,
+        mime_type: str = "",
+        metadata: dict | None = None,
+        created_by: str = "runtime",
+        session_id: str | None = None,
+    ) -> ButlerArtifact:
+        room = self.get_room(room_id)
+        if not room:
+            raise ValueError(f"Unknown room: {room_id}")
+
+        now = utc_now()
+        artifact = ButlerArtifact(
+            id=_make_id("artifact"),
+            room_id=room_id,
+            artifact_kind=artifact_kind.strip().lower() or "note",
+            artifact_url=artifact_url.strip(),
+            mime_type=mime_type.strip(),
+            metadata=copy.deepcopy(metadata or {}),
+            created_by=created_by,
+            created_at=now,
+            updated_at=now,
+        )
+
+        artifacts = self._load_room_artifacts()
+        artifacts.append(artifact)
+        self._save_room_artifacts(artifacts)
+
+        self.append_context_event(
+            event_type="room.artifact.attached",
+            summary=f"Attached {artifact.artifact_kind} to room {room.title}",
+            payload={
+                "room_id": room_id,
+                "artifact_id": artifact.id,
+                "artifact_url": artifact.artifact_url,
+            },
+            entity_refs=[f"rooms/{room_id}", f"artifacts/{artifact.id}"],
+            session_id=session_id,
+        )
+        if session_id:
+            self.touch_session(session_id)
+        return artifact
+
+    def list_room_artifacts(self, room_id: str, *, limit: int = 50) -> list[ButlerArtifact]:
+        artifacts = [artifact for artifact in self._load_room_artifacts() if artifact.room_id == room_id]
+        artifacts.sort(key=lambda artifact: artifact.updated_at or artifact.created_at, reverse=True)
+        return artifacts[:limit]
+
+    def get_version(self, version_id: str) -> ButlerVersion | None:
+        for version in self._load_room_versions():
+            if version.id == version_id:
+                return version
+        return None
+
+    def list_room_versions(self, room_id: str, *, limit: int = 20) -> list[ButlerVersion]:
+        versions = [version for version in self._load_room_versions() if version.room_id == room_id]
+        versions.sort(key=lambda version: version.created_at, reverse=True)
+        return versions[:limit]
+
+    def get_current_draft_version(self, room_id: str) -> ButlerVersion | None:
+        room = self.get_room(room_id)
+        if not room or not room.current_draft_version_id:
+            return None
+        return self.get_version(room.current_draft_version_id)
+
+    def save_draft_version(
+        self,
+        room_id: str,
+        *,
+        payload: dict | None = None,
+        parent_version_id: str | None = None,
+        state_kind: str = "room_state",
+        metadata: dict | None = None,
+        created_by: str = "runtime",
+        session_id: str | None = None,
+    ) -> ButlerVersion:
+        room = self.get_room(room_id)
+        if not room:
+            raise ValueError(f"Unknown room: {room_id}")
+
+        parent_id = parent_version_id or room.current_draft_version_id or room.current_published_version_id
+        now = utc_now()
+        version = ButlerVersion(
+            id=_make_id("version"),
+            room_id=room_id,
+            state_kind=state_kind.strip() or "room_state",
+            payload=copy.deepcopy(payload or {}),
+            metadata=copy.deepcopy(metadata or {}),
+            parent_version_id=parent_id,
+            created_by=created_by,
+            status="draft",
+            created_at=now,
+        )
+
+        versions = self._load_room_versions()
+        versions.append(version)
+        self._save_room_versions(versions)
+
+        rooms = self._load_rooms()
+        updated_room = None
+        for index, candidate in enumerate(rooms):
+            if candidate.id != room_id:
+                continue
+            candidate.current_draft_version_id = version.id
+            candidate.updated_at = now
+            rooms[index] = candidate
+            updated_room = candidate
+            break
+        if updated_room:
+            self._save_rooms(rooms)
+
+        self.append_context_event(
+            event_type="room.draft.saved",
+            summary=f"Saved draft for room {room.title}",
+            payload={
+                "room_id": room_id,
+                "version_id": version.id,
+                "parent_version_id": parent_id,
+                "state_kind": version.state_kind,
+            },
+            entity_refs=[f"rooms/{room_id}", f"versions/{version.id}"],
+            session_id=session_id,
+        )
+        if session_id:
+            self.touch_session(session_id)
+        return version
+
+    def publish_draft_version(
+        self,
+        version_id: str,
+        *,
+        created_by: str = "runtime",
+        session_id: str | None = None,
+    ) -> ButlerVersion | None:
+        versions = self._load_room_versions()
+        target: ButlerVersion | None = None
+        now = utc_now()
+        room_id = ""
+
+        for index, version in enumerate(versions):
+            if version.id != version_id:
+                continue
+            room_id = version.room_id
+            version.status = "published"
+            version.published_at = now
+            if created_by and not version.created_by:
+                version.created_by = created_by
+            versions[index] = version
+            target = version
+            break
+        if not target:
+            return None
+
+        for index, version in enumerate(versions):
+            if version.id == target.id or version.room_id != room_id or version.status != "published":
+                continue
+            version.status = "archived"
+            versions[index] = version
+
+        self._save_room_versions(versions)
+
+        rooms = self._load_rooms()
+        room = None
+        for index, candidate in enumerate(rooms):
+            if candidate.id != room_id:
+                continue
+            candidate.current_published_version_id = target.id
+            if candidate.current_draft_version_id == target.id:
+                candidate.current_draft_version_id = None
+            candidate.updated_at = now
+            rooms[index] = candidate
+            room = candidate
+            break
+        if room:
+            self._save_rooms(rooms)
+
+        self.append_context_event(
+            event_type="room.version.published",
+            summary=f"Published room version for {room.title if room else room_id}",
+            payload={
+                "room_id": room_id,
+                "version_id": target.id,
+                "parent_version_id": target.parent_version_id,
+            },
+            entity_refs=[f"rooms/{room_id}", f"versions/{target.id}"],
+            session_id=session_id,
+        )
+        if session_id:
+            self.touch_session(session_id)
+        return target
+
+    # ──────────────────────────────────────────────────────────────────────
     # Memory
     # ──────────────────────────────────────────────────────────────────────
 
@@ -506,6 +809,10 @@ class ButlerRuntime:
         target_device: str = "",
         source_surface: str = "",
         metadata: dict | None = None,
+        room_id: str | None = None,
+        artifact_id: str | None = None,
+        version_id: str | None = None,
+        refs: list[str] | None = None,
         expires_in_minutes: int | None = 60,
         session_id: str | None = None,
     ) -> ContinuityPacket:
@@ -518,6 +825,10 @@ class ButlerRuntime:
             target_device=target_device.strip(),
             source_surface=source_surface.strip(),
             metadata=copy.deepcopy(metadata or {}),
+            room_id=room_id or None,
+            artifact_id=artifact_id or None,
+            version_id=version_id or None,
+            refs=list(refs or []),
             expires_at=future_expiry_iso(expires_in_minutes) if expires_in_minutes else None,
             session_id=session_id,
         )

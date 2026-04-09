@@ -284,6 +284,114 @@ class ContextSheet:
 
 
 @dataclass
+class ButlerRoom:
+    """Canonical context container shared across phone, desktop, and future cloud surfaces."""
+
+    id: str
+    kind: str
+    title: str
+    status: str = "active"
+    metadata: dict[str, Any] = field(default_factory=dict)
+    source_refs: list[str] = field(default_factory=list)
+    current_draft_version_id: str | None = None
+    current_published_version_id: str | None = None
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["room_id"] = self.id
+        data["current_draft_version"] = self.current_draft_version_id
+        data["current_published_version"] = self.current_published_version_id
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ButlerRoom":
+        return cls(
+            id=data.get("id") or data.get("room_id"),
+            kind=data.get("kind", "general"),
+            title=data.get("title") or data.get("name") or "Untitled room",
+            status=data.get("status", "active"),
+            metadata=data.get("metadata", {}),
+            source_refs=data.get("source_refs", []),
+            current_draft_version_id=data.get("current_draft_version_id") or data.get("current_draft_version"),
+            current_published_version_id=data.get("current_published_version_id") or data.get("current_published_version"),
+            created_at=data.get("created_at", utc_now()),
+            updated_at=data.get("updated_at", utc_now()),
+        )
+
+
+@dataclass
+class ButlerArtifact:
+    """Canonical artifact pointer attached to a Butler room."""
+
+    id: str
+    room_id: str
+    artifact_kind: str
+    artifact_url: str
+    mime_type: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_by: str = ""
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["artifact_id"] = self.id
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ButlerArtifact":
+        return cls(
+            id=data.get("id") or data.get("artifact_id"),
+            room_id=data.get("room_id", ""),
+            artifact_kind=data.get("artifact_kind", "note"),
+            artifact_url=data.get("artifact_url", ""),
+            mime_type=data.get("mime_type", ""),
+            metadata=data.get("metadata", {}),
+            created_by=data.get("created_by", ""),
+            created_at=data.get("created_at", utc_now()),
+            updated_at=data.get("updated_at", utc_now()),
+        )
+
+
+@dataclass
+class ButlerVersion:
+    """Versioned state snapshot for a Butler room draft or publish event."""
+
+    id: str
+    room_id: str
+    state_kind: str = "room_state"
+    payload: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    parent_version_id: str | None = None
+    created_by: str = ""
+    status: str = "draft"
+    created_at: str = field(default_factory=utc_now)
+    published_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["version_id"] = self.id
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ButlerVersion":
+        return cls(
+            id=data.get("id") or data.get("version_id"),
+            room_id=data.get("room_id", ""),
+            state_kind=data.get("state_kind", "room_state"),
+            payload=data.get("payload", {}),
+            metadata=data.get("metadata", {}),
+            parent_version_id=data.get("parent_version_id") or data.get("parent_version"),
+            created_by=data.get("created_by", ""),
+            status=data.get("status", "draft"),
+            created_at=data.get("created_at", utc_now()),
+            published_at=data.get("published_at"),
+        )
+
+
+@dataclass
 class ContinuityPacket:
     """Cross-device handoff packet for phone/desktop continuity."""
 
@@ -296,6 +404,10 @@ class ContinuityPacket:
     source_surface: str = ""
     status: str = "pending"
     metadata: dict[str, Any] = field(default_factory=dict)
+    room_id: str | None = None
+    artifact_id: str | None = None
+    version_id: str | None = None
+    refs: list[str] = field(default_factory=list)
     lease_owner: str = ""
     lease_expires_at: str | None = None
     consumed_at: str | None = None
@@ -319,6 +431,10 @@ class ContinuityPacket:
             source_surface=data.get("source_surface", ""),
             status=data.get("status", "pending"),
             metadata=data.get("metadata", {}),
+            room_id=data.get("room_id"),
+            artifact_id=data.get("artifact_id"),
+            version_id=data.get("version_id"),
+            refs=data.get("refs", []),
             lease_owner=data.get("lease_owner", ""),
             lease_expires_at=data.get("lease_expires_at"),
             consumed_at=data.get("consumed_at"),

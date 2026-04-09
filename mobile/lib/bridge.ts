@@ -30,6 +30,10 @@ export interface ContinuityPacket {
   source_surface?: string;
   status?: string;
   metadata?: Record<string, unknown>;
+  room_id?: string | null;
+  artifact_id?: string | null;
+  version_id?: string | null;
+  refs?: string[];
   lease_owner?: string;
   lease_expires_at?: string | null;
   consumed_at?: string | null;
@@ -37,6 +41,47 @@ export interface ContinuityPacket {
   session_id?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface ButlerRoom {
+  id: string;
+  room_id: string;
+  kind: string;
+  title: string;
+  status?: string;
+  metadata?: Record<string, unknown>;
+  source_refs?: string[];
+  current_draft_version?: string | null;
+  current_published_version?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ButlerRoomArtifact {
+  id: string;
+  artifact_id: string;
+  room_id: string;
+  artifact_kind: string;
+  artifact_url: string;
+  mime_type?: string;
+  metadata?: Record<string, unknown>;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ButlerRoomVersion {
+  id: string;
+  version_id: string;
+  room_id: string;
+  state_kind: string;
+  payload?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  parent_version_id?: string | null;
+  created_by?: string;
+  status?: string;
+  created_at?: string;
+  published_at?: string | null;
 }
 
 export interface ContextCaptureRequest {
@@ -268,6 +313,10 @@ export async function pushContinuityPacket(payload: {
   source_device?: string;
   source_surface?: string;
   metadata?: Record<string, unknown>;
+  room_id?: string;
+  artifact_id?: string;
+  version_id?: string;
+  refs?: string[];
   expires_in_minutes?: number;
 }): Promise<unknown> {
   if (!bridgeUrl || !bridgeToken) {
@@ -361,6 +410,184 @@ export async function setDesktopClipboard(content: string, sourceDevice = "phone
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Desktop clipboard write error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function listRooms(kind?: string, limit = 12): Promise<ButlerRoom[]> {
+  if (!bridgeUrl || !bridgeToken) {
+    throw new Error("Desktop bridge not connected.");
+  }
+
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (kind) {
+    params.set("kind", kind);
+  }
+  const res = await fetch(`${bridgeUrl}/rooms?${params.toString()}`, {
+    headers: bridgeHeaders(false),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Room list error ${res.status}: ${text}`);
+  }
+  const payload = (await res.json()) as { rooms?: ButlerRoom[] };
+  return Array.isArray(payload.rooms) ? payload.rooms : [];
+}
+
+export async function createRoom(payload: {
+  kind: string;
+  title: string;
+  status?: string;
+  metadata?: Record<string, unknown>;
+  source_refs?: string[];
+  initial_payload?: Record<string, unknown>;
+  created_by?: string;
+}): Promise<{ room?: ButlerRoom; draft?: ButlerRoomVersion | null }> {
+  if (!bridgeUrl || !bridgeToken) {
+    throw new Error("Desktop bridge not connected.");
+  }
+
+  const res = await fetch(`${bridgeUrl}/rooms`, {
+    method: "POST",
+    headers: bridgeHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Room create error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function getRoom(roomId: string): Promise<ButlerRoom | null> {
+  if (!bridgeUrl || !bridgeToken) {
+    throw new Error("Desktop bridge not connected.");
+  }
+  const res = await fetch(`${bridgeUrl}/rooms/${encodeURIComponent(roomId)}`, {
+    headers: bridgeHeaders(false),
+  });
+  if (res.status === 404) {
+    return null;
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Room fetch error ${res.status}: ${text}`);
+  }
+  const payload = (await res.json()) as { room?: ButlerRoom };
+  return payload.room ?? null;
+}
+
+export async function listRoomArtifacts(roomId: string, limit = 25): Promise<ButlerRoomArtifact[]> {
+  if (!bridgeUrl || !bridgeToken) {
+    throw new Error("Desktop bridge not connected.");
+  }
+  const params = new URLSearchParams({ limit: String(limit) });
+  const res = await fetch(`${bridgeUrl}/rooms/${encodeURIComponent(roomId)}/artifacts?${params.toString()}`, {
+    headers: bridgeHeaders(false),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Room artifact list error ${res.status}: ${text}`);
+  }
+  const payload = (await res.json()) as { artifacts?: ButlerRoomArtifact[] };
+  return Array.isArray(payload.artifacts) ? payload.artifacts : [];
+}
+
+export async function attachRoomArtifact(payload: {
+  roomId: string;
+  artifact_kind: string;
+  artifact_url: string;
+  mime_type?: string;
+  metadata?: Record<string, unknown>;
+  created_by?: string;
+}): Promise<{ artifact?: ButlerRoomArtifact }> {
+  if (!bridgeUrl || !bridgeToken) {
+    throw new Error("Desktop bridge not connected.");
+  }
+  const { roomId, ...body } = payload;
+  const res = await fetch(`${bridgeUrl}/rooms/${encodeURIComponent(roomId)}/artifacts`, {
+    method: "POST",
+    headers: bridgeHeaders(),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Room artifact attach error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function getCurrentRoomDraft(
+  roomId: string
+): Promise<{ room?: ButlerRoom | null; draft?: ButlerRoomVersion | null }> {
+  if (!bridgeUrl || !bridgeToken) {
+    throw new Error("Desktop bridge not connected.");
+  }
+  const res = await fetch(`${bridgeUrl}/rooms/${encodeURIComponent(roomId)}/draft`, {
+    headers: bridgeHeaders(false),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Room draft fetch error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function listRoomVersions(roomId: string, limit = 25): Promise<ButlerRoomVersion[]> {
+  if (!bridgeUrl || !bridgeToken) {
+    throw new Error("Desktop bridge not connected.");
+  }
+  const params = new URLSearchParams({ limit: String(limit) });
+  const res = await fetch(`${bridgeUrl}/rooms/${encodeURIComponent(roomId)}/versions?${params.toString()}`, {
+    headers: bridgeHeaders(false),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Room version list error ${res.status}: ${text}`);
+  }
+  const payload = (await res.json()) as { versions?: ButlerRoomVersion[] };
+  return Array.isArray(payload.versions) ? payload.versions : [];
+}
+
+export async function saveRoomDraft(payload: {
+  roomId: string;
+  payload: Record<string, unknown>;
+  parent_version_id?: string | null;
+  state_kind?: string;
+  metadata?: Record<string, unknown>;
+  created_by?: string;
+}): Promise<{ room?: ButlerRoom | null; version?: ButlerRoomVersion }> {
+  if (!bridgeUrl || !bridgeToken) {
+    throw new Error("Desktop bridge not connected.");
+  }
+  const { roomId, ...body } = payload;
+  const res = await fetch(`${bridgeUrl}/rooms/${encodeURIComponent(roomId)}/drafts`, {
+    method: "POST",
+    headers: bridgeHeaders(),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Room draft save error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function publishRoomVersion(
+  versionId: string,
+  createdBy = "mobile"
+): Promise<{ room?: ButlerRoom | null; version?: ButlerRoomVersion }> {
+  if (!bridgeUrl || !bridgeToken) {
+    throw new Error("Desktop bridge not connected.");
+  }
+  const res = await fetch(`${bridgeUrl}/versions/${encodeURIComponent(versionId)}/publish`, {
+    method: "POST",
+    headers: bridgeHeaders(),
+    body: JSON.stringify({ created_by: createdBy }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Room publish error ${res.status}: ${text}`);
   }
   return res.json();
 }

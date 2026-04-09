@@ -4,6 +4,7 @@ export type ModuleId =
   | "hero_brief"
   | "pairing"
   | "operator_stack"
+  | "room_workspace"
   | "voice"
   | "recipes"
   | "review_lane"
@@ -35,6 +36,7 @@ export const MODULES: Record<ModuleId, PhoneModuleManifest> = {
   hero_brief: { id: "hero_brief", title: "Today at a glance", mode: "home" },
   pairing: { id: "pairing", title: "Secure Mac pairing", mode: "act" },
   operator_stack: { id: "operator_stack", title: "Operator stack", mode: "act", requiresPairing: true },
+  room_workspace: { id: "room_workspace", title: "Canonical rooms", mode: "act", requiresPairing: true },
   voice: { id: "voice", title: "Voice layer", mode: "act" },
   recipes: { id: "recipes", title: "Recipes", mode: "home", requiresPairing: true },
   review_lane: { id: "review_lane", title: "Review lane", mode: "review", requiresPairing: true },

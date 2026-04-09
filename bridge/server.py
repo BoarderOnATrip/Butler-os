@@ -167,6 +167,10 @@ class ContinuityPushRequest(BaseModel):
     source_device: str = "phone"
     source_surface: str = "mobile"
     metadata: dict = Field(default_factory=dict)
+    room_id: str | None = None
+    artifact_id: str | None = None
+    version_id: str | None = None
+    refs: list[str] = Field(default_factory=list)
     expires_in_minutes: int = 60
 
 
@@ -187,6 +191,36 @@ class DesktopClipboardWriteRequest(BaseModel):
     source_device: str = "phone"
     source_surface: str = "mobile.continuity"
     create_packet: bool = True
+
+
+class RoomCreateRequest(BaseModel):
+    kind: str
+    title: str
+    status: str = "active"
+    metadata: dict = Field(default_factory=dict)
+    source_refs: list[str] = Field(default_factory=list)
+    initial_payload: dict = Field(default_factory=dict)
+    created_by: str = "mobile"
+
+
+class RoomArtifactCreateRequest(BaseModel):
+    artifact_kind: str
+    artifact_url: str
+    mime_type: str = ""
+    metadata: dict = Field(default_factory=dict)
+    created_by: str = "mobile"
+
+
+class RoomDraftSaveRequest(BaseModel):
+    payload: dict = Field(default_factory=dict)
+    parent_version_id: str | None = None
+    state_kind: str = "room_state"
+    metadata: dict = Field(default_factory=dict)
+    created_by: str = "mobile"
+
+
+class PublishDraftRequest(BaseModel):
+    created_by: str = "mobile"
 
 
 def _desktop_get_clipboard() -> str:
@@ -321,12 +355,157 @@ def push_continuity(req: ContinuityPushRequest, _: None = Depends(_require_pairi
             source_device=req.source_device,
             source_surface=req.source_surface,
             metadata=req.metadata,
+            room_id=req.room_id,
+            artifact_id=req.artifact_id,
+            version_id=req.version_id,
+            refs=req.refs,
             expires_in_minutes=req.expires_in_minutes,
             session_id=session.id,
         )
         return {"ok": True, "packet": packet.to_dict()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/rooms")
+def create_room(req: RoomCreateRequest, _: None = Depends(_require_pairing_token)):
+    """Create a canonical Butler room and its first draft version."""
+    session = _get_session()
+    try:
+        room = runtime.create_room(
+            kind=req.kind,
+            title=req.title,
+            status=req.status,
+            metadata=req.metadata,
+            source_refs=req.source_refs,
+            initial_payload=req.initial_payload or None,
+            created_by=req.created_by,
+            session_id=session.id,
+        )
+        draft = runtime.get_current_draft_version(room.id)
+        return {"ok": True, "room": room.to_dict(), "draft": draft.to_dict() if draft else None}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/rooms")
+def list_rooms(
+    kind: str | None = None,
+    limit: int = 25,
+    _: None = Depends(_require_pairing_token),
+):
+    """List recent canonical Butler rooms."""
+    try:
+        rooms = runtime.list_rooms(kind=kind, limit=limit)
+        return {"ok": True, "rooms": [room.to_dict() for room in rooms]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/rooms/{room_id}")
+def get_room(room_id: str, _: None = Depends(_require_pairing_token)):
+    """Fetch one canonical Butler room."""
+    room = runtime.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    return {"ok": True, "room": room.to_dict()}
+
+
+@app.get("/rooms/{room_id}/artifacts")
+def list_room_artifacts(room_id: str, limit: int = 25, _: None = Depends(_require_pairing_token)):
+    """List canonical artifact refs attached to a room."""
+    room = runtime.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    artifacts = runtime.list_room_artifacts(room_id, limit=limit)
+    return {"ok": True, "artifacts": [artifact.to_dict() for artifact in artifacts]}
+
+
+@app.post("/rooms/{room_id}/artifacts")
+def attach_room_artifact(
+    room_id: str,
+    req: RoomArtifactCreateRequest,
+    _: None = Depends(_require_pairing_token),
+):
+    """Attach a canonical artifact pointer to a room."""
+    session = _get_session()
+    try:
+        artifact = runtime.attach_room_artifact(
+            room_id,
+            artifact_kind=req.artifact_kind,
+            artifact_url=req.artifact_url,
+            mime_type=req.mime_type,
+            metadata=req.metadata,
+            created_by=req.created_by,
+            session_id=session.id,
+        )
+        return {"ok": True, "artifact": artifact.to_dict()}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/rooms/{room_id}/draft")
+def get_room_draft(room_id: str, _: None = Depends(_require_pairing_token)):
+    """Fetch the current draft version head for a room."""
+    room = runtime.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    draft = runtime.get_current_draft_version(room_id)
+    return {"ok": True, "room": room.to_dict(), "draft": draft.to_dict() if draft else None}
+
+
+@app.get("/rooms/{room_id}/versions")
+def list_room_versions(room_id: str, limit: int = 25, _: None = Depends(_require_pairing_token)):
+    """List recent room versions, newest first."""
+    room = runtime.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    versions = runtime.list_room_versions(room_id, limit=limit)
+    return {"ok": True, "versions": [version.to_dict() for version in versions]}
+
+
+@app.post("/rooms/{room_id}/drafts")
+def save_room_draft(room_id: str, req: RoomDraftSaveRequest, _: None = Depends(_require_pairing_token)):
+    """Create a new draft version for a room."""
+    session = _get_session()
+    try:
+        version = runtime.save_draft_version(
+            room_id,
+            payload=req.payload,
+            parent_version_id=req.parent_version_id,
+            state_kind=req.state_kind,
+            metadata=req.metadata,
+            created_by=req.created_by,
+            session_id=session.id,
+        )
+        room = runtime.get_room(room_id)
+        return {"ok": True, "room": room.to_dict() if room else None, "version": version.to_dict()}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/versions/{version_id}")
+def get_version(version_id: str, _: None = Depends(_require_pairing_token)):
+    """Fetch one room version."""
+    version = runtime.get_version(version_id)
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found.")
+    return {"ok": True, "version": version.to_dict()}
+
+
+@app.post("/versions/{version_id}/publish")
+def publish_version(version_id: str, req: PublishDraftRequest, _: None = Depends(_require_pairing_token)):
+    """Publish a draft version into the room's immutable published head."""
+    session = _get_session()
+    version = runtime.publish_draft_version(version_id, created_by=req.created_by, session_id=session.id)
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found.")
+    room = runtime.get_room(version.room_id)
+    return {"ok": True, "room": room.to_dict() if room else None, "version": version.to_dict()}
 
 
 @app.get("/continuity/inbox")
