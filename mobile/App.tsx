@@ -336,6 +336,41 @@ function humanizeRef(ref: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function contextDirectoryForKind(kind: string): string {
+  switch (compactText(kind).toLowerCase()) {
+    case "person":
+      return "people";
+    case "organization":
+      return "organizations";
+    case "place":
+      return "places";
+    case "conversation":
+      return "conversations";
+    case "task":
+      return "tasks";
+    case "project":
+      return "projects";
+    case "artifact":
+      return "artifacts";
+    case "secret":
+      return "secrets";
+    default:
+      return compactText(kind).toLowerCase() || "items";
+  }
+}
+
+function refFromContextSheet(sheet: Record<string, unknown> | null | undefined): string {
+  if (!sheet) {
+    return "";
+  }
+  const kind = compactText(String(sheet.kind || ""));
+  const slug = compactText(String(sheet.slug || ""));
+  if (!kind || !slug) {
+    return "";
+  }
+  return `${contextDirectoryForKind(kind)}/${slug}`;
+}
+
 function buildPhoneMetadataReviewContent(item: AndroidPhoneMetadataItem): string {
   const source = item.source ? JSON.stringify(item.source, null, 2) : "";
   return [
@@ -1222,13 +1257,16 @@ export default function App() {
     return result.room;
   }, [refreshRooms]);
 
-  const handleSendRefToMac = useCallback(async (
+  const queueRefForMac = useCallback(async (
     sourceRef: string,
     title: string,
     options?: {
       kind?: string;
       summary?: string;
       metadata?: Record<string, unknown>;
+      activateAct?: boolean;
+      alertOnError?: boolean;
+      setStatusMessage?: boolean;
     }
   ) => {
     const actionKey = `handoff-ref:${sourceRef}`;
@@ -1271,17 +1309,44 @@ export default function App() {
         },
         expires_in_minutes: 240,
       });
-      setLastResponse(`Queued "${title}" for your Mac.`);
+      if (options?.setStatusMessage !== false) {
+        setLastResponse(`Queued "${title}" for your Mac.`);
+      }
       await refreshContinuityInbox({ silent: true });
-      setActiveMode("act");
+      if (options?.activateAct !== false) {
+        setActiveMode("act");
+      }
+      return true;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      setLastResponse(message);
-      Alert.alert("Context handoff failed", message);
+      if (options?.setStatusMessage !== false) {
+        setLastResponse(message);
+      }
+      if (options?.alertOnError !== false) {
+        Alert.alert("Context handoff failed", message);
+      }
+      return false;
     } finally {
       setRoomActionBusy("");
     }
   }, [refreshContinuityInbox, resolveCanonicalRoomForRef]);
+
+  const handleSendRefToMac = useCallback(async (
+    sourceRef: string,
+    title: string,
+    options?: {
+      kind?: string;
+      summary?: string;
+      metadata?: Record<string, unknown>;
+    }
+  ) => {
+    await queueRefForMac(sourceRef, title, {
+      ...options,
+      activateAct: true,
+      alertOnError: true,
+      setStatusMessage: true,
+    });
+  }, [queueRefForMac]);
 
   const refreshPhoneMetadataStatus = useCallback(async () => {
     try {
@@ -1372,7 +1437,30 @@ export default function App() {
         if (!parsed.ok) {
           throw new Error(parsed.error || "Failed to promote phone metadata.");
         }
-        focusMode("review", `Promoted ${item.title} into pending review.`);
+        const output =
+          parsed.output && typeof parsed.output === "object"
+            ? (parsed.output as Record<string, unknown>)
+            : {};
+        const pendingId = compactText(String(output.id || ""));
+        const queuedForMac = pendingId
+          ? await queueRefForMac(`pending/${pendingId}`, item.title, {
+              kind: "pending",
+              summary: item.summary || item.title,
+              metadata: {
+                lane: "phone_metadata_promote",
+                capture_kind: item.kind,
+              },
+              activateAct: false,
+              alertOnError: false,
+              setStatusMessage: false,
+            })
+          : false;
+        focusMode(
+          "review",
+          queuedForMac
+            ? `Promoted ${item.title} into pending review and queued it for your Mac.`
+            : `Promoted ${item.title} into pending review.`
+        );
         await refreshPendingQueue();
         await refreshActivityFeed();
       } catch (error: unknown) {
@@ -1383,7 +1471,7 @@ export default function App() {
         setPhoneMetadataPromoteBusy("");
       }
     },
-    [desktopPaired, focusMode, handleToolCall, refreshActivityFeed, refreshPendingQueue, unwrapToolResult]
+    [desktopPaired, focusMode, handleToolCall, queueRefForMac, refreshActivityFeed, refreshPendingQueue, unwrapToolResult]
   );
 
   const handleSyncPhoneMetadata = useCallback(
@@ -1572,7 +1660,34 @@ export default function App() {
       if (!parsed.ok) {
         throw new Error(parsed.error || "Failed to promote pending item.");
       }
-      movePendingIntoPeople(item, `Promoted "${item.title}" into canonical context and moved it into People so you can finish the relationship record.`);
+      const output =
+        parsed.output && typeof parsed.output === "object"
+          ? (parsed.output as Record<string, unknown>)
+          : {};
+      const sheet =
+        output.sheet && typeof output.sheet === "object"
+          ? (output.sheet as Record<string, unknown>)
+          : null;
+      const promotedRef = refFromContextSheet(sheet);
+      const queuedForMac = promotedRef
+        ? await queueRefForMac(promotedRef, item.title, {
+            kind: inferRoomKindFromRef(promotedRef),
+            summary: item.content || item.title,
+            metadata: {
+              lane: "review_promote",
+              pending_id: item.id,
+            },
+            activateAct: false,
+            alertOnError: false,
+            setStatusMessage: false,
+          })
+        : false;
+      movePendingIntoPeople(
+        item,
+        queuedForMac
+          ? `Promoted "${item.title}" into canonical context, queued it for your Mac, and moved it into People so you can finish the relationship record.`
+          : `Promoted "${item.title}" into canonical context and moved it into People so you can finish the relationship record.`
+      );
       updateReviewStatus(item.id, "promoted");
       await refreshPendingQueue();
       await refreshActivityFeed();
@@ -1588,6 +1703,7 @@ export default function App() {
     desktopPaired,
     handleToolCall,
     movePendingIntoPeople,
+    queueRefForMac,
     refreshActivityFeed,
     refreshContextMap,
     refreshPendingQueue,
@@ -1800,6 +1916,35 @@ export default function App() {
       if (!parsed.ok) {
         throw new Error(parsed.error || "Failed to log relationship interaction.");
       }
+      const output =
+        parsed.output && typeof parsed.output === "object"
+          ? (parsed.output as Record<string, unknown>)
+          : {};
+      const followup =
+        output.followup && typeof output.followup === "object"
+          ? (output.followup as Record<string, unknown>)
+          : null;
+      const personSheet =
+        output.person_sheet && typeof output.person_sheet === "object"
+          ? (output.person_sheet as Record<string, unknown>)
+          : null;
+      const personRef =
+        compactText(String((followup && followup.person_ref) || "")) || refFromContextSheet(personSheet);
+      const queuedForMac = personRef
+        ? await queueRefForMac(personRef, personName, {
+            kind: "person",
+            summary,
+            metadata: {
+              lane: "relationship_log",
+              next_action: nextAction,
+              place_ref: compactText(String((followup && followup.place_ref) || "")),
+              conversation_ref: compactText(String((followup && followup.conversation_ref) || "")),
+            },
+            activateAct: false,
+            alertOnError: false,
+            setStatusMessage: false,
+          })
+        : false;
 
       setRelationshipName("");
       setRelationshipCompany("");
@@ -1821,7 +1966,12 @@ export default function App() {
       setRelationshipNotes("");
       setRelationshipTagsCsv("");
       setLastUtterance(`Relationship: ${personName}`);
-      focusMode("people", `Logged ${personName} and refreshed the follow-up queue.`);
+      focusMode(
+        "people",
+        queuedForMac
+          ? `Logged ${personName}, refreshed the follow-up queue, and queued the relationship room for your Mac.`
+          : `Logged ${personName} and refreshed the follow-up queue.`
+      );
       await refreshFollowupQueue();
       await refreshActivityFeed();
       await refreshContextMap();
@@ -1855,6 +2005,7 @@ export default function App() {
     relationshipNotes,
     relationshipTagsCsv,
     focusMode,
+    queueRefForMac,
     refreshActivityFeed,
     refreshContextMap,
     refreshFollowupQueue,
@@ -1982,6 +2133,7 @@ export default function App() {
 
     setCaptureBusy(true);
     try {
+      const captureOrigin = selectedCapture ? selectedCapture.source : "manual note";
       const result = await captureContext({
         capture_kind: captureKind,
         title,
@@ -1993,16 +2145,45 @@ export default function App() {
         source_device: SOURCE_DEVICE,
         source_surface: SOURCE_SURFACE,
       });
+      const parsed = unwrapToolResult(result);
+      if (!parsed.ok) {
+        throw new Error(parsed.error || "Failed to capture pending context.");
+      }
+      const output =
+        parsed.output && typeof parsed.output === "object"
+          ? (parsed.output as Record<string, unknown>)
+          : {};
+      const pendingItem =
+        output.pending_item && typeof output.pending_item === "object"
+          ? (output.pending_item as Record<string, unknown>)
+          : null;
+      const pendingId = compactText(String((pendingItem && pendingItem.id) || ""));
+      const queuedForMac = pendingId
+        ? await queueRefForMac(`pending/${pendingId}`, title, {
+            kind: "pending",
+            summary: content || title,
+            metadata: {
+              lane: "capture_pending",
+              capture_kind: captureKind,
+              capture_source: captureOrigin,
+            },
+            activateAct: false,
+            alertOnError: false,
+            setStatusMessage: false,
+          })
+        : false;
 
       setCaptureTitle("");
       setCaptureContent("");
       setSelectedCapture(null);
       setLastUtterance(`Capture: ${captureKind}`);
-      focusMode(
-        "review",
+      const baseMessage =
         typeof result === "string"
           ? result
-          : `Saved "${title}" to pending review from ${selectedCapture ? selectedCapture.source : "manual note"}.`
+          : `Saved "${title}" to pending review from ${captureOrigin}.`;
+      focusMode(
+        "review",
+        queuedForMac ? `${baseMessage} Queued it for your Mac.` : baseMessage
       );
       await refreshPendingQueue();
       await refreshActivityFeed();
@@ -2022,8 +2203,10 @@ export default function App() {
     focusMode,
     refreshActivityFeed,
     refreshContextMap,
+    queueRefForMac,
     selectedCapture,
     refreshPendingQueue,
+    unwrapToolResult,
   ]);
 
   const clearSelectedCapture = useCallback(() => {
