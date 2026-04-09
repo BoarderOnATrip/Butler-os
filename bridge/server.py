@@ -223,6 +223,14 @@ class PublishDraftRequest(BaseModel):
     created_by: str = "mobile"
 
 
+class RoomResolveRequest(BaseModel):
+    source_ref: str
+    title: str = ""
+    kind: str = ""
+    metadata: dict = Field(default_factory=dict)
+    created_by: str = "mobile"
+
+
 def _desktop_get_clipboard() -> str:
     result = subprocess.run(["pbpaste"], capture_output=True)
     return result.stdout.decode("utf-8", errors="replace")
@@ -409,6 +417,26 @@ def get_room(room_id: str, _: None = Depends(_require_pairing_token)):
     if not room:
         raise HTTPException(status_code=404, detail="Room not found.")
     return {"ok": True, "room": room.to_dict()}
+
+
+@app.post("/rooms/resolve")
+def resolve_room(req: RoomResolveRequest, _: None = Depends(_require_pairing_token)):
+    """Resolve an existing room by source ref or create one if none exists."""
+    session = _get_session()
+    try:
+        room, created = runtime.resolve_room(
+            source_ref=req.source_ref,
+            title=req.title,
+            kind=req.kind,
+            metadata=req.metadata,
+            created_by=req.created_by,
+            session_id=session.id,
+        )
+        return {"ok": True, "room": room.to_dict(), "created": created}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/rooms/{room_id}/artifacts")

@@ -56,6 +56,8 @@ interface Props {
   pinBusyRef?: string;
   onRefresh: () => void;
   onTogglePin: (ref: string, pinned: boolean, label: string) => void;
+  onSendToMac?: (ref: string, title: string, summary?: string, kind?: string) => void;
+  sendBusyRef?: string;
 }
 
 const ACCENT_COLORS: Record<string, { border: string; fill: string; text: string; line: string }> = {
@@ -160,6 +162,8 @@ export default function ContextMapCard({
   pinBusyRef,
   onRefresh,
   onTogglePin,
+  onSendToMac,
+  sendBusyRef,
 }: Props) {
   const [selectedNodeId, setSelectedNodeId] = useState("");
   const [canvasWidth, setCanvasWidth] = useState(0);
@@ -383,6 +387,19 @@ export default function ContextMapCard({
               </TouchableOpacity>
             ) : null}
           </View>
+          {selectedNode.ref && onSendToMac ? (
+            <View style={styles.buttonRow}>
+              <TouchableOpacity
+                style={[styles.secondaryButton, sendBusyRef === selectedNode.ref && styles.buttonDisabled]}
+                disabled={sendBusyRef === selectedNode.ref}
+                onPress={() => onSendToMac(selectedNode.ref || "", selectedNode.title, selectedNode.summary, selectedNode.kind)}
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {sendBusyRef === selectedNode.ref ? "Sending..." : "Send To Mac"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
           {formatNodeMeta(selectedNode) ? <Text style={styles.detailMeta}>{formatNodeMeta(selectedNode)}</Text> : null}
           {selectedNode.summary ? <Text style={styles.detailSummary}>{selectedNode.summary}</Text> : null}
           {selectedNode.ref ? <Text style={styles.detailRef}>{selectedNode.ref}</Text> : null}
@@ -559,6 +576,20 @@ const styles = StyleSheet.create({
     color: "#08110a",
     fontWeight: "800",
     fontSize: 15,
+  },
+  secondaryButton: {
+    flex: 1,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#2d3b53",
+    backgroundColor: "#121a29",
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  secondaryButtonText: {
+    color: "#dce6f8",
+    fontWeight: "700",
+    fontSize: 14,
   },
   buttonDisabled: {
     opacity: 0.6,

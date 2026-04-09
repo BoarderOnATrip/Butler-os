@@ -477,6 +477,28 @@ export async function getRoom(roomId: string): Promise<ButlerRoom | null> {
   return payload.room ?? null;
 }
 
+export async function resolveRoom(payload: {
+  source_ref: string;
+  title?: string;
+  kind?: string;
+  metadata?: Record<string, unknown>;
+  created_by?: string;
+}): Promise<{ room?: ButlerRoom; created?: boolean }> {
+  if (!bridgeUrl || !bridgeToken) {
+    throw new Error("Desktop bridge not connected.");
+  }
+  const res = await fetch(`${bridgeUrl}/rooms/resolve`, {
+    method: "POST",
+    headers: bridgeHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Room resolve error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
 export async function listRoomArtifacts(roomId: string, limit = 25): Promise<ButlerRoomArtifact[]> {
   if (!bridgeUrl || !bridgeToken) {
     throw new Error("Desktop bridge not connected.");

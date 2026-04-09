@@ -52,6 +52,7 @@ import {
   pairDesktop,
   publishRoomVersion,
   pushContinuityPacket,
+  resolveRoom,
   restoreBridgePairing,
   runCoreAgent,
   runAgentic,
@@ -302,6 +303,37 @@ function formatFeedTimestamp(value?: string): string {
 
 function formatMetadataTimestamp(value?: string): string {
   return formatFeedTimestamp(value);
+}
+
+function inferRoomKindFromRef(ref: string): string {
+  const prefix = compactText(ref).split("/", 1)[0].toLowerCase();
+  switch (prefix) {
+    case "people":
+      return "person";
+    case "organizations":
+      return "organization";
+    case "places":
+      return "place";
+    case "conversations":
+      return "conversation";
+    case "projects":
+      return "project";
+    case "tasks":
+      return "task";
+    case "pending":
+      return "pending";
+    default:
+      return prefix.replace(/s$/, "") || "general";
+  }
+}
+
+function humanizeRef(ref: string): string {
+  const suffix = compactText(ref).split("/").slice(-1)[0] || ref;
+  return suffix
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function buildPhoneMetadataReviewContent(item: AndroidPhoneMetadataItem): string {
@@ -1166,6 +1198,90 @@ export default function App() {
       setRoomActionBusy("");
     }
   }, [refreshContinuityInbox]);
+
+  const resolveCanonicalRoomForRef = useCallback(async (
+    sourceRef: string,
+    title: string,
+    kind?: string,
+    metadata?: Record<string, unknown>
+  ) => {
+    const result = await resolveRoom({
+      source_ref: sourceRef,
+      title: compactText(title) || humanizeRef(sourceRef),
+      kind: compactText(kind || "") || inferRoomKindFromRef(sourceRef),
+      metadata: {
+        source_surface: "mobile.ref-resolution",
+        ...metadata,
+      },
+      created_by: "mobile",
+    });
+    if (!result.room) {
+      throw new Error(`Unable to resolve room for ${sourceRef}.`);
+    }
+    await refreshRooms({ silent: true });
+    return result.room;
+  }, [refreshRooms]);
+
+  const handleSendRefToMac = useCallback(async (
+    sourceRef: string,
+    title: string,
+    options?: {
+      kind?: string;
+      summary?: string;
+      metadata?: Record<string, unknown>;
+    }
+  ) => {
+    const actionKey = `handoff-ref:${sourceRef}`;
+    setRoomActionBusy(actionKey);
+    try {
+      const normalizedRef = compactText(sourceRef);
+      if (!normalizedRef) {
+        throw new Error("Missing context ref.");
+      }
+
+      let roomId = "";
+      let packetKind = "room_ref";
+      if (!normalizedRef.startsWith("pending/")) {
+        const room = await resolveCanonicalRoomForRef(
+          normalizedRef,
+          title,
+          options?.kind,
+          options?.metadata
+        );
+        roomId = room.room_id;
+      } else {
+        packetKind = "pending_ref";
+      }
+
+      await pushContinuityPacket({
+        kind: packetKind,
+        title: `Open on Mac: ${title}`,
+        content: options?.summary || title,
+        target_device: "desktop",
+        source_device: "phone",
+        source_surface: "mobile.context-handoff",
+        room_id: roomId || undefined,
+        refs: [normalizedRef],
+        metadata: {
+          action: roomId ? "open_room" : "open_ref",
+          source_ref: normalizedRef,
+          room_kind: options?.kind || inferRoomKindFromRef(normalizedRef),
+          title,
+          ...options?.metadata,
+        },
+        expires_in_minutes: 240,
+      });
+      setLastResponse(`Queued "${title}" for your Mac.`);
+      await refreshContinuityInbox({ silent: true });
+      setActiveMode("act");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLastResponse(message);
+      Alert.alert("Context handoff failed", message);
+    } finally {
+      setRoomActionBusy("");
+    }
+  }, [refreshContinuityInbox, resolveCanonicalRoomForRef]);
 
   const refreshPhoneMetadataStatus = useCallback(async () => {
     try {
@@ -2728,6 +2844,30 @@ export default function App() {
                         </Text>
                       </TouchableOpacity>
                     </View>
+                    <View style={styles.buttonRow}>
+                      <TouchableOpacity
+                        style={[
+                          styles.secondaryButton,
+                          roomActionBusy === `handoff-ref:pending/${item.id}` && styles.buttonDisabled,
+                        ]}
+                        disabled={roomActionBusy !== ""}
+                        onPress={() =>
+                          handleSendRefToMac(`pending/${item.id}`, item.title, {
+                            kind: "pending",
+                            summary: item.content || insight || item.capture_kind,
+                            metadata: {
+                              lane: "review",
+                              review_status: reviewStatus,
+                              pending_id: item.id,
+                            },
+                          })
+                        }
+                      >
+                        <Text style={styles.secondaryButtonText}>
+                          {roomActionBusy === `handoff-ref:pending/${item.id}` ? "Sending..." : "Send To Mac"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                     {reviewStatus === "promoted" ? (
                       <Text style={styles.reviewStatusText}>Prefilled into relationship ingest below.</Text>
                     ) : null}
@@ -3097,6 +3237,33 @@ export default function App() {
                       {item.thread_summary}
                     </Text>
                   ) : null}
+                  {item.person_ref ? (
+                    <View style={styles.buttonRow}>
+                      <TouchableOpacity
+                        style={[
+                          styles.secondaryButton,
+                          roomActionBusy === `handoff-ref:${item.person_ref}` && styles.buttonDisabled,
+                        ]}
+                        disabled={roomActionBusy !== ""}
+                        onPress={() =>
+                          handleSendRefToMac(item.person_ref || "", getFollowupName(item), {
+                            kind: "person",
+                            summary: item.next_action || item.thread_summary || item.company || item.channel || "",
+                            metadata: {
+                              lane: "followups",
+                              score: item.score ?? null,
+                              due_label: item.due_label || "",
+                              next_action: item.next_action || "",
+                            },
+                          })
+                        }
+                      >
+                        <Text style={styles.secondaryButtonText}>
+                          {roomActionBusy === `handoff-ref:${item.person_ref}` ? "Sending..." : "Send To Mac"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
                 </View>
               ))}
             </View>
@@ -3280,6 +3447,14 @@ export default function App() {
           pinBusyRef={pinBusyRef}
           onRefresh={refreshContextMap}
           onTogglePin={handleTogglePin}
+          onSendToMac={(ref, title, summary, kind) =>
+            handleSendRefToMac(ref, title, {
+              kind,
+              summary,
+              metadata: { lane: "context_map" },
+            })
+          }
+          sendBusyRef={roomActionBusy.startsWith("handoff-ref:") ? roomActionBusy.replace("handoff-ref:", "") : ""}
         />
         ) : null}
 
@@ -3340,6 +3515,30 @@ export default function App() {
                     <Text style={styles.feedMeta} numberOfLines={1}>
                       {item.path}
                     </Text>
+                  ) : null}
+                  {item.ref ? (
+                    <View style={styles.buttonRow}>
+                      <TouchableOpacity
+                        style={[
+                          styles.secondaryButton,
+                          roomActionBusy === `handoff-ref:${item.ref}` && styles.buttonDisabled,
+                        ]}
+                        disabled={roomActionBusy !== ""}
+                        onPress={() =>
+                          handleSendRefToMac(item.ref || "", item.title || item.ref || "Journal item", {
+                            summary: item.summary || item.event_type || item.kind || "",
+                            metadata: {
+                              lane: "journal",
+                              event_type: item.event_type || "",
+                            },
+                          })
+                        }
+                      >
+                        <Text style={styles.secondaryButtonText}>
+                          {roomActionBusy === `handoff-ref:${item.ref}` ? "Sending..." : "Send To Mac"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                   ) : null}
                 </View>
               ))}

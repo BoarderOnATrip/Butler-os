@@ -562,12 +562,56 @@ class ButlerRuntime:
                 return room
         return None
 
+    def find_room_by_source_ref(self, source_ref: str) -> ButlerRoom | None:
+        normalized_ref = source_ref.strip()
+        if not normalized_ref:
+            return None
+        for room in self._load_rooms():
+            if normalized_ref in room.source_refs:
+                return room
+        return None
+
     def list_rooms(self, *, kind: str | None = None, limit: int = 50) -> list[ButlerRoom]:
         rooms = self._load_rooms()
         if kind:
             rooms = [room for room in rooms if room.kind == kind.strip().lower()]
         rooms.sort(key=lambda room: room.updated_at or room.created_at, reverse=True)
         return rooms[:limit]
+
+    def resolve_room(
+        self,
+        *,
+        source_ref: str,
+        title: str = "",
+        kind: str = "",
+        metadata: dict | None = None,
+        created_by: str = "runtime",
+        session_id: str | None = None,
+    ) -> tuple[ButlerRoom, bool]:
+        normalized_ref = source_ref.strip()
+        if not normalized_ref:
+            raise ValueError("source_ref is required")
+
+        existing = self.find_room_by_source_ref(normalized_ref)
+        if existing:
+            return existing, False
+
+        inferred_kind = (kind.strip().lower() or normalized_ref.split("/", 1)[0].rstrip("s") or "general")
+        inferred_title = title.strip() or normalized_ref.split("/", 1)[-1].replace("-", " ").strip().title() or normalized_ref
+        room = self.create_room(
+            kind=inferred_kind,
+            title=inferred_title,
+            metadata=metadata or {},
+            source_refs=[normalized_ref],
+            initial_payload={
+                "title": inferred_title,
+                "kind": inferred_kind,
+                "source_ref": normalized_ref,
+            },
+            created_by=created_by,
+            session_id=session_id,
+        )
+        return room, True
 
     def attach_room_artifact(
         self,
