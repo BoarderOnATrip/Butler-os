@@ -23,6 +23,7 @@ import hmac
 import json
 import os
 import secrets
+import subprocess
 import sys
 import asyncio
 from pathlib import Path
@@ -158,6 +159,45 @@ class ContextCaptureRequest(BaseModel):
     source_app: str = ""
 
 
+class ContinuityPushRequest(BaseModel):
+    kind: str = "text"
+    title: str
+    content: str = ""
+    target_device: str
+    source_device: str = "phone"
+    source_surface: str = "mobile"
+    metadata: dict = Field(default_factory=dict)
+    expires_in_minutes: int = 60
+
+
+class ContinuityAckRequest(BaseModel):
+    packet_id: str
+    actor_device: str = "phone"
+    note: str = ""
+
+
+class ContinuityClaimRequest(BaseModel):
+    packet_id: str
+    actor_device: str
+    lease_minutes: int = 15
+
+
+class DesktopClipboardWriteRequest(BaseModel):
+    content: str
+    source_device: str = "phone"
+    source_surface: str = "mobile.continuity"
+    create_packet: bool = True
+
+
+def _desktop_get_clipboard() -> str:
+    result = subprocess.run(["pbpaste"], capture_output=True)
+    return result.stdout.decode("utf-8", errors="replace")
+
+
+def _desktop_set_clipboard(text: str) -> None:
+    subprocess.run(["pbcopy"], input=text, text=True, check=True)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Routes
 # ──────────────────────────────────────────────────────────────────────────────
@@ -264,6 +304,125 @@ def capture_context(req: ContextCaptureRequest, _: None = Depends(_require_pairi
             actor="mobile-bridge",
         )
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/continuity/push")
+def push_continuity(req: ContinuityPushRequest, _: None = Depends(_require_pairing_token)):
+    """Create a cross-device continuity packet."""
+    session = _get_session()
+    try:
+        packet = runtime.create_continuity_packet(
+            kind=req.kind,
+            title=req.title,
+            content=req.content,
+            target_device=req.target_device,
+            source_device=req.source_device,
+            source_surface=req.source_surface,
+            metadata=req.metadata,
+            expires_in_minutes=req.expires_in_minutes,
+            session_id=session.id,
+        )
+        return {"ok": True, "packet": packet.to_dict()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/continuity/inbox")
+def continuity_inbox(
+    target_device: str = "phone",
+    status: str | None = None,
+    limit: int = 20,
+    include_consumed: bool = False,
+    _: None = Depends(_require_pairing_token),
+):
+    """List pending or recent continuity packets for a device."""
+    try:
+        packets = runtime.list_continuity_packets(
+            target_device=target_device,
+            status=status,
+            limit=limit,
+            include_consumed=include_consumed,
+        )
+        return {"ok": True, "packets": [packet.to_dict() for packet in packets]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/continuity/ack")
+def acknowledge_continuity(req: ContinuityAckRequest, _: None = Depends(_require_pairing_token)):
+    """Mark a continuity packet as consumed."""
+    packet = runtime.acknowledge_continuity_packet(
+        req.packet_id,
+        actor_device=req.actor_device,
+        note=req.note,
+    )
+    if not packet:
+        raise HTTPException(status_code=404, detail="Continuity packet not found.")
+    return {"ok": True, "packet": packet.to_dict()}
+
+
+@app.post("/continuity/claim")
+def claim_continuity(req: ContinuityClaimRequest, _: None = Depends(_require_pairing_token)):
+    """Claim a packet for active editing to avoid simultaneous edits."""
+    try:
+        packet = runtime.claim_continuity_packet(
+            req.packet_id,
+            actor_device=req.actor_device,
+            lease_minutes=req.lease_minutes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if not packet:
+        raise HTTPException(status_code=404, detail="Continuity packet not found.")
+    return {"ok": True, "packet": packet.to_dict()}
+
+
+@app.get("/clipboard/desktop")
+def desktop_clipboard_read(_: None = Depends(_require_pairing_token)):
+    """Read the current Mac clipboard for continuity handoff."""
+    try:
+        content = _desktop_get_clipboard()
+        return {
+            "ok": True,
+            "content": content,
+            "preview": content[:280],
+            "has_content": bool(content),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/clipboard/desktop")
+def desktop_clipboard_write(req: DesktopClipboardWriteRequest, _: None = Depends(_require_pairing_token)):
+    """Set the current Mac clipboard and optionally log a continuity packet."""
+    session = _get_session()
+    try:
+        _desktop_set_clipboard(req.content)
+        packet = None
+        if req.create_packet:
+            packet = runtime.create_continuity_packet(
+                kind="clipboard",
+                title="Phone clipboard sent to Mac",
+                content=req.content[:2000],
+                target_device="desktop",
+                source_device=req.source_device,
+                source_surface=req.source_surface,
+                metadata={"applied_to": "desktop_clipboard"},
+                expires_in_minutes=30,
+                session_id=session.id,
+            )
+            packet = runtime.acknowledge_continuity_packet(
+                packet.id,
+                actor_device="desktop",
+                note="Applied directly to desktop clipboard.",
+            )
+        return {
+            "ok": True,
+            "content_length": len(req.content),
+            "packet": packet.to_dict() if packet else None,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

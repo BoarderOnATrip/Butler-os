@@ -259,6 +259,24 @@ The mini-agent should gain these powers over time:
 The mini-agent should not become:
 
 - a fully autonomous always-on operator by default
+
+### Continuity And Collaboration Direction
+
+Recommended direction:
+
+- treat phone and desktop handoff as a first-class continuity layer, not a side feature
+- start with append-only continuity packets plus explicit `claim` and `ack` semantics
+- let one device actively claim a draft or task while the other waits, forks, or comments
+- keep publish artifacts immutable; publishing should create a new version instead of overwriting in place
+- use optimistic concurrency for team publishing with `version` and `parent_version`
+- keep room layout and camera/view state lightweight, but version actual room objects and content patches
+
+This is the safest path toward simultaneous edits and multi-publishing:
+
+- `handoff packets` for transport
+- `leases` for active editing
+- `versions` for publishing
+- `append-only events` for provenance
 - a hidden automation layer that mutates state without user visibility
 - a replacement for Butler's canonical context model
 

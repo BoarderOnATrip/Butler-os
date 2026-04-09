@@ -284,6 +284,52 @@ class ContextSheet:
 
 
 @dataclass
+class ContinuityPacket:
+    """Cross-device handoff packet for phone/desktop continuity."""
+
+    id: str
+    kind: str
+    title: str
+    content: str = ""
+    source_device: str = ""
+    target_device: str = ""
+    source_surface: str = ""
+    status: str = "pending"
+    metadata: dict[str, Any] = field(default_factory=dict)
+    lease_owner: str = ""
+    lease_expires_at: str | None = None
+    consumed_at: str | None = None
+    expires_at: str | None = None
+    session_id: str | None = None
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ContinuityPacket":
+        return cls(
+            id=data["id"],
+            kind=data.get("kind", "text"),
+            title=data.get("title", ""),
+            content=data.get("content", ""),
+            source_device=data.get("source_device", ""),
+            target_device=data.get("target_device", ""),
+            source_surface=data.get("source_surface", ""),
+            status=data.get("status", "pending"),
+            metadata=data.get("metadata", {}),
+            lease_owner=data.get("lease_owner", ""),
+            lease_expires_at=data.get("lease_expires_at"),
+            consumed_at=data.get("consumed_at"),
+            expires_at=data.get("expires_at"),
+            session_id=data.get("session_id"),
+            created_at=data.get("created_at", utc_now()),
+            updated_at=data.get("updated_at", utc_now()),
+        )
+
+
+@dataclass
 class ToolSpec:
     """Typed tool metadata for runtime policy and UI surfaces."""
 

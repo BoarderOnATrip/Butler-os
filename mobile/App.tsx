@@ -20,6 +20,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Clipboard from "expo-clipboard";
 import * as ImagePicker from "expo-image-picker";
 
 import ContextMapCard, { ContextMapSnapshot } from "./components/ContextMapCard";
@@ -37,14 +38,22 @@ import { RECIPES } from "./lib/recipes";
 import { TOOL_DEFINITIONS } from "./lib/tools";
 import { DEFAULT_PHONE_SKIN, PHONE_MODE_META, PHONE_SKINS, type PhoneMode, type QuickActionRecipe } from "./lib/skins";
 import {
+  acknowledgeContinuityPacket,
   captureContext,
+  claimContinuityPacket,
   clearBridgePairing,
   discoverDesktop,
   executeTool,
+  getDesktopClipboard,
   isConnected,
+  listContinuityInbox,
   pairDesktop,
+  pushContinuityPacket,
+  restoreBridgePairing,
   runCoreAgent,
   runAgentic,
+  setDesktopClipboard,
+  type ContinuityPacket,
 } from "./lib/bridge";
 
 const AGENT_ID = process.env.EXPO_PUBLIC_ELEVENLABS_AGENT_ID ?? "";
@@ -478,6 +487,11 @@ export default function App() {
   const [openclawActionBusy, setOpenclawActionBusy] = useState("");
   const [openclawRemoteRpcUrl, setOpenclawRemoteRpcUrl] = useState("");
   const [openclawRemoteLabel, setOpenclawRemoteLabel] = useState("Shared VPN operator");
+  const [continuityItems, setContinuityItems] = useState<ContinuityPacket[]>([]);
+  const [continuityBusy, setContinuityBusy] = useState(false);
+  const [continuityActionBusy, setContinuityActionBusy] = useState("");
+  const [continuityTitle, setContinuityTitle] = useState("Quick handoff");
+  const [continuityNote, setContinuityNote] = useState("");
   const conversationRef = useRef<any>(null);
 
   useEffect(() => {
@@ -489,6 +503,25 @@ export default function App() {
       setPairingHost((current) => current || url);
       setLastResponse("Desktop discovered on your local network. Add the pairing token from your Mac to unlock secure control.");
     });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    restoreBridgePairing()
+      .then((pairing) => {
+        if (cancelled || !pairing) {
+          return;
+        }
+        setPairingHost(pairing.url);
+        setPairingToken(pairing.token);
+        setDesktopPaired(true);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -894,6 +927,139 @@ export default function App() {
       }
     );
   }, [runOpenClawAction]);
+
+  const refreshContinuityInbox = useCallback(async (options?: { silent?: boolean }) => {
+    if (!desktopPaired) {
+      setContinuityItems([]);
+      return;
+    }
+
+    setContinuityBusy(true);
+    try {
+      const packets = await listContinuityInbox("phone", undefined, 10, true);
+      setContinuityItems(packets);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLastResponse(message);
+      if (!options?.silent) {
+        Alert.alert("Continuity refresh failed", message);
+      }
+    } finally {
+      setContinuityBusy(false);
+    }
+  }, [desktopPaired]);
+
+  const handleSendPhoneClipboardToMac = useCallback(async () => {
+    if (!desktopPaired) {
+      Alert.alert("Mac not paired", "Pair your Mac first so Butler can hand off your clipboard.");
+      return;
+    }
+    setContinuityActionBusy("push-clipboard");
+    try {
+      const content = await Clipboard.getStringAsync();
+      if (!compactText(content)) {
+        throw new Error("Phone clipboard is empty.");
+      }
+      await setDesktopClipboard(content, "phone");
+      setLastResponse("Phone clipboard sent to your Mac.");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLastResponse(message);
+      Alert.alert("Clipboard handoff failed", message);
+    } finally {
+      setContinuityActionBusy("");
+    }
+  }, [desktopPaired]);
+
+  const handlePullMacClipboardToPhone = useCallback(async () => {
+    if (!desktopPaired) {
+      Alert.alert("Mac not paired", "Pair your Mac first so Butler can pull the Mac clipboard.");
+      return;
+    }
+    setContinuityActionBusy("pull-clipboard");
+    try {
+      const payload = await getDesktopClipboard();
+      const content = typeof payload.content === "string" ? payload.content : "";
+      if (!compactText(content)) {
+        throw new Error("The Mac clipboard is empty.");
+      }
+      await Clipboard.setStringAsync(content);
+      setLastResponse("Mac clipboard copied onto your phone.");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLastResponse(message);
+      Alert.alert("Clipboard pull failed", message);
+    } finally {
+      setContinuityActionBusy("");
+    }
+  }, [desktopPaired]);
+
+  const handleSendContinuityNote = useCallback(async () => {
+    if (!desktopPaired) {
+      Alert.alert("Mac not paired", "Pair your Mac first so Butler can hand off notes.");
+      return;
+    }
+    const title = compactText(continuityTitle) || "Quick handoff";
+    const content = continuityNote.trim();
+    if (!content) {
+      Alert.alert("Nothing to hand off", "Add a quick note or draft before sending it to the Mac.");
+      return;
+    }
+
+    setContinuityActionBusy("send-note");
+    try {
+      await pushContinuityPacket({
+        kind: "text",
+        title,
+        content,
+        target_device: "desktop",
+        source_device: "phone",
+        source_surface: "mobile.act.continuity",
+        metadata: { lane: "quick_handoff" },
+        expires_in_minutes: 180,
+      });
+      setContinuityNote("");
+      setLastResponse(`Continuity handoff queued for your Mac: ${title}.`);
+      await refreshContinuityInbox({ silent: true });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLastResponse(message);
+      Alert.alert("Handoff failed", message);
+    } finally {
+      setContinuityActionBusy("");
+    }
+  }, [continuityNote, continuityTitle, desktopPaired, refreshContinuityInbox]);
+
+  const handleClaimContinuityPacket = useCallback(async (packetId: string) => {
+    setContinuityActionBusy(`claim:${packetId}`);
+    try {
+      await claimContinuityPacket(packetId, "phone", 15);
+      await refreshContinuityInbox({ silent: true });
+      setLastResponse("Continuity packet claimed on this phone.");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLastResponse(message);
+      Alert.alert("Claim failed", message);
+    } finally {
+      setContinuityActionBusy("");
+    }
+  }, [refreshContinuityInbox]);
+
+  const handleCopyContinuityPacket = useCallback(async (packet: ContinuityPacket) => {
+    setContinuityActionBusy(`copy:${packet.id}`);
+    try {
+      await Clipboard.setStringAsync(packet.content || "");
+      await acknowledgeContinuityPacket(packet.id, "phone", "Copied into phone clipboard.");
+      await refreshContinuityInbox({ silent: true });
+      setLastResponse(`Copied "${packet.title}" into your phone clipboard.`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLastResponse(message);
+      Alert.alert("Copy failed", message);
+    } finally {
+      setContinuityActionBusy("");
+    }
+  }, [refreshContinuityInbox]);
 
   const refreshPhoneMetadataStatus = useCallback(async () => {
     try {
@@ -1322,6 +1488,7 @@ export default function App() {
       setActivityItems([]);
       setContextMap(null);
       setOpenclawStatus(null);
+      setContinuityItems([]);
       return;
     }
     refreshPendingQueue();
@@ -1329,7 +1496,8 @@ export default function App() {
     refreshActivityFeed();
     refreshContextMap();
     refreshOpenClawStatus({ silent: true });
-  }, [desktopPaired, refreshPendingQueue, refreshFollowupQueue, refreshActivityFeed, refreshContextMap, refreshOpenClawStatus]);
+    refreshContinuityInbox({ silent: true });
+  }, [desktopPaired, refreshPendingQueue, refreshFollowupQueue, refreshActivityFeed, refreshContextMap, refreshOpenClawStatus, refreshContinuityInbox]);
 
   useEffect(() => {
     refreshPhoneMetadataStatus().then((status) => {
@@ -1835,6 +2003,138 @@ export default function App() {
               <Text style={styles.secondaryButtonText}>Disconnect</Text>
             </TouchableOpacity>
           </View>
+        </View>
+        ) : null}
+
+        {activeMode === "act" ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Continuity lane</Text>
+          <Text style={styles.cardBody}>
+            Hand work between the phone and Mac without losing the thread. Butler keeps a small inbox of packets while giving you direct clipboard handoff when you want zero friction.
+          </Text>
+          <View style={styles.reviewSummaryRow}>
+            <Text style={[styles.metaBadge, desktopPaired ? styles.metaBadgeReady : styles.metaBadgeBlocked]}>
+              {desktopPaired ? "Bridge online" : "Bridge offline"}
+            </Text>
+            <Text style={styles.reviewSummaryText}>
+              {continuityItems.filter((item) => item.status !== "consumed").length} live packet
+              {continuityItems.filter((item) => item.status !== "consumed").length === 1 ? "" : "s"}
+            </Text>
+          </View>
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[styles.secondaryButton, continuityBusy && styles.buttonDisabled]}
+              disabled={!desktopPaired || continuityBusy || continuityActionBusy !== ""}
+              onPress={() => refreshContinuityInbox()}
+            >
+              <Text style={styles.secondaryButtonText}>{continuityBusy ? "Refreshing..." : "Refresh Inbox"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.primaryButton, continuityActionBusy === "push-clipboard" && styles.buttonDisabled]}
+              disabled={!desktopPaired || continuityActionBusy !== ""}
+              onPress={handleSendPhoneClipboardToMac}
+            >
+              <Text style={styles.primaryButtonText}>
+                {continuityActionBusy === "push-clipboard" ? "Sending..." : "Phone → Mac Clipboard"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[styles.secondaryButton, continuityActionBusy === "pull-clipboard" && styles.buttonDisabled]}
+              disabled={!desktopPaired || continuityActionBusy !== ""}
+              onPress={handlePullMacClipboardToPhone}
+            >
+              <Text style={styles.secondaryButtonText}>
+                {continuityActionBusy === "pull-clipboard" ? "Pulling..." : "Mac → Phone Clipboard"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.sectionGroup}>
+            <TextInput
+              autoCapitalize="sentences"
+              autoCorrect
+              placeholder="Quick handoff title"
+              placeholderTextColor="#5f6b84"
+              style={styles.input}
+              value={continuityTitle}
+              onChangeText={setContinuityTitle}
+            />
+            <TextInput
+              autoCapitalize="sentences"
+              autoCorrect
+              multiline
+              placeholder="Send a note, draft, or breadcrumb to the other device"
+              placeholderTextColor="#5f6b84"
+              style={[styles.input, styles.textArea]}
+              value={continuityNote}
+              onChangeText={setContinuityNote}
+            />
+            <View style={styles.buttonRow}>
+              <TouchableOpacity
+                style={[styles.primaryButton, continuityActionBusy === "send-note" && styles.buttonDisabled]}
+                disabled={!desktopPaired || continuityActionBusy !== ""}
+                onPress={handleSendContinuityNote}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {continuityActionBusy === "send-note" ? "Sending..." : "Send Note To Mac"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          {!desktopPaired ? (
+            <Text style={styles.captureHint}>
+              Pair your Mac first. Continuity packets ride over the trusted Butler bridge so the phone and desktop stay in one execution thread.
+            </Text>
+          ) : null}
+          {continuityItems.length ? (
+            <View style={styles.pendingList}>
+              {continuityItems.map((packet) => (
+                <View key={packet.id} style={styles.pendingRow}>
+                  <View style={styles.pendingHeaderRow}>
+                    <View style={styles.pendingMeta}>
+                      <Text style={styles.pendingTitle}>{packet.title}</Text>
+                      <Text style={styles.pendingKind}>
+                        {[packet.kind, packet.source_device, packet.status].filter(Boolean).join(" • ")}
+                        {packet.updated_at ? ` • ${formatMetadataTimestamp(packet.updated_at)}` : ""}
+                      </Text>
+                    </View>
+                  </View>
+                  {packet.content ? (
+                    <Text style={styles.pendingContent} numberOfLines={3}>
+                      {packet.content}
+                    </Text>
+                  ) : null}
+                  <View style={styles.buttonRow}>
+                    {packet.status !== "consumed" ? (
+                      <TouchableOpacity
+                        style={[styles.secondaryButton, continuityActionBusy === `claim:${packet.id}` && styles.buttonDisabled]}
+                        disabled={continuityActionBusy !== ""}
+                        onPress={() => handleClaimContinuityPacket(packet.id)}
+                      >
+                        <Text style={styles.secondaryButtonText}>
+                          {continuityActionBusy === `claim:${packet.id}` ? "Claiming..." : "Claim"}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                    <TouchableOpacity
+                      style={[styles.secondaryButton, continuityActionBusy === `copy:${packet.id}` && styles.buttonDisabled]}
+                      disabled={continuityActionBusy !== ""}
+                      onPress={() => handleCopyContinuityPacket(packet)}
+                    >
+                      <Text style={styles.secondaryButtonText}>
+                        {continuityActionBusy === `copy:${packet.id}` ? "Copying..." : "Copy To Phone"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.captureHint}>
+              No handoff packets yet. Start by sending a clipboard snippet or quick note to your Mac.
+            </Text>
+          )}
         </View>
         ) : null}
 

@@ -22,6 +22,7 @@ from runtime.models import (
     ButlerSession,
     ButlerTask,
     CapabilityGrant,
+    ContinuityPacket,
     ContextEvent,
     ContextPendingItem,
     ContextSheet,
@@ -86,6 +87,17 @@ class ButlerRuntime:
     def _save_approvals(self, approvals: list[ApprovalRequest]) -> None:
         self.store.save_json("approvals.json", [approval.to_dict() for approval in approvals])
 
+    def _load_continuity_packets(self) -> list[ContinuityPacket]:
+        data = self.store.load_json("continuity_packets.json", [])
+        return [ContinuityPacket.from_dict(row) for row in data]
+
+    def _save_continuity_packets(self, packets: list[ContinuityPacket]) -> None:
+        self.store.save_json("continuity_packets.json", [packet.to_dict() for packet in packets])
+
+    def _write_continuity_event(self, payload: dict) -> str:
+        path = self.store.append_jsonl("continuity_events.jsonl", payload)
+        return str(path)
+
     def _write_receipt(self, receipt: ToolCallReceipt) -> str:
         path = self.store.append_jsonl("receipts.jsonl", receipt.to_dict())
         return str(path)
@@ -103,6 +115,9 @@ class ButlerRuntime:
 
     def _save_arm_state(self, data: dict) -> None:
         self.store.save_json("arm_state.json", data)
+
+    def _continuity_packet_expired(self, packet: ContinuityPacket) -> bool:
+        return is_expired(packet.expires_at)
 
     def _consume_arm_token(self, token: str | None) -> dict | None:
         if not token:
@@ -476,6 +491,146 @@ class ButlerRuntime:
         if session_id:
             memories = [memory for memory in memories if memory.session_id == session_id]
         return memories[-limit:]
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Continuity
+    # ──────────────────────────────────────────────────────────────────────
+
+    def create_continuity_packet(
+        self,
+        *,
+        kind: str,
+        title: str,
+        content: str = "",
+        source_device: str = "",
+        target_device: str = "",
+        source_surface: str = "",
+        metadata: dict | None = None,
+        expires_in_minutes: int | None = 60,
+        session_id: str | None = None,
+    ) -> ContinuityPacket:
+        packet = ContinuityPacket(
+            id=_make_id("handoff"),
+            kind=kind.strip() or "text",
+            title=title.strip() or "Continuity handoff",
+            content=content,
+            source_device=source_device.strip(),
+            target_device=target_device.strip(),
+            source_surface=source_surface.strip(),
+            metadata=copy.deepcopy(metadata or {}),
+            expires_at=future_expiry_iso(expires_in_minutes) if expires_in_minutes else None,
+            session_id=session_id,
+        )
+        packets = self._load_continuity_packets()
+        packets.append(packet)
+        self._save_continuity_packets(packets)
+        self._write_continuity_event(
+            {
+                "event": "continuity_packet_created",
+                "packet": packet.to_dict(),
+                "created_at": utc_now(),
+            }
+        )
+        if session_id:
+            self.touch_session(session_id)
+        return packet
+
+    def list_continuity_packets(
+        self,
+        *,
+        target_device: str | None = None,
+        status: str | None = None,
+        limit: int = 20,
+        include_consumed: bool = False,
+    ) -> list[ContinuityPacket]:
+        packets = self._load_continuity_packets()
+        if target_device:
+            packets = [packet for packet in packets if packet.target_device == target_device]
+        if status:
+            packets = [packet for packet in packets if packet.status == status]
+        elif not include_consumed:
+            packets = [packet for packet in packets if packet.status != "consumed"]
+        packets = [packet for packet in packets if not self._continuity_packet_expired(packet)]
+        packets.sort(key=lambda packet: packet.updated_at or packet.created_at, reverse=True)
+        return packets[:limit]
+
+    def claim_continuity_packet(
+        self,
+        packet_id: str,
+        *,
+        actor_device: str,
+        lease_minutes: int = 15,
+    ) -> ContinuityPacket | None:
+        packets = self._load_continuity_packets()
+        target = None
+        now = utc_now()
+        for index, packet in enumerate(packets):
+            if packet.id != packet_id:
+                continue
+            if packet.status == "consumed" or self._continuity_packet_expired(packet):
+                return None
+            if (
+                packet.lease_owner
+                and packet.lease_owner != actor_device
+                and not is_expired(packet.lease_expires_at)
+            ):
+                raise ValueError(f"Packet is currently claimed by {packet.lease_owner}")
+            packet.status = "claimed"
+            packet.lease_owner = actor_device.strip()
+            packet.lease_expires_at = future_expiry_iso(lease_minutes)
+            packet.updated_at = now
+            packets[index] = packet
+            target = packet
+            break
+        if target:
+            self._save_continuity_packets(packets)
+            self._write_continuity_event(
+                {
+                    "event": "continuity_packet_claimed",
+                    "packet_id": target.id,
+                    "actor_device": actor_device,
+                    "lease_expires_at": target.lease_expires_at,
+                    "created_at": now,
+                }
+            )
+        return target
+
+    def acknowledge_continuity_packet(
+        self,
+        packet_id: str,
+        *,
+        actor_device: str,
+        note: str = "",
+    ) -> ContinuityPacket | None:
+        packets = self._load_continuity_packets()
+        target = None
+        now = utc_now()
+        for index, packet in enumerate(packets):
+            if packet.id != packet_id:
+                continue
+            packet.status = "consumed"
+            packet.lease_owner = actor_device.strip()
+            packet.lease_expires_at = None
+            packet.consumed_at = now
+            packet.updated_at = now
+            packet.metadata = dict(packet.metadata)
+            if note:
+                packet.metadata["ack_note"] = note
+            packets[index] = packet
+            target = packet
+            break
+        if target:
+            self._save_continuity_packets(packets)
+            self._write_continuity_event(
+                {
+                    "event": "continuity_packet_consumed",
+                    "packet_id": target.id,
+                    "actor_device": actor_device,
+                    "note": note,
+                    "created_at": now,
+                }
+            )
+        return target
 
     # ──────────────────────────────────────────────────────────────────────
     # Context repository
