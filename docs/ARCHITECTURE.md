@@ -4,6 +4,7 @@ Detailed next-phase product architecture:
 
 - `docs/CONTEXT_ENGINE_AND_RAVEN_ARCHITECTURE_2026-04-07.md`
 - `docs/BUTLER_OS_ROADMAP_2026-04-08.md`
+- `docs/BOUNDARY_SPEC.md`
 
 ## Product shape
 
@@ -34,6 +35,16 @@ ButlerRuntime (Python)
         +-- plugin hooks
         +-- agentic orchestration
 ```
+
+## External Boundary
+
+`Butler-os` is the canonical runtime and continuity owner.
+
+- `Butler-os` owns truth, approvals, continuity, rooms, IDs, and publish/version state
+- `DewDrops` owns the desktop spatial harness and multi-agent orchestration UX
+- `Lifegirdle` is the shared context model both consume, not a third runtime
+
+See [BOUNDARY_SPEC.md](BOUNDARY_SPEC.md) for the hard contract.
 
 ## Core packages
 

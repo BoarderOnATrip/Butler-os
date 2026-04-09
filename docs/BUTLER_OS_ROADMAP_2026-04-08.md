@@ -12,6 +12,8 @@ We need one current answer to three questions:
 
 This roadmap is the working product plan for the repo as it exists today.
 
+The shared runtime / DewDrops / Lifegirdle ownership contract now lives in `docs/BOUNDARY_SPEC.md`.
+
 ## Product Definition
 
 `aiButler` is not just a CRM, and it is not just a voice assistant.
