@@ -476,6 +476,8 @@ export default function App() {
   const [openclawStatus, setOpenclawStatus] = useState<OpenClawStatusSnapshot | null>(null);
   const [openclawBusy, setOpenclawBusy] = useState(false);
   const [openclawActionBusy, setOpenclawActionBusy] = useState("");
+  const [openclawRemoteRpcUrl, setOpenclawRemoteRpcUrl] = useState("");
+  const [openclawRemoteLabel, setOpenclawRemoteLabel] = useState("Shared VPN operator");
   const conversationRef = useRef<any>(null);
 
   useEffect(() => {
@@ -857,6 +859,41 @@ export default function App() {
     },
     [desktopPaired, handleToolCall, refreshOpenClawStatus, unwrapToolResult]
   );
+
+  const handleConfigureOpenClawRemote = useCallback(() => {
+    const rpcUrl = compactText(openclawRemoteRpcUrl);
+    const label = compactText(openclawRemoteLabel) || "Shared VPN operator";
+    if (!rpcUrl) {
+      Alert.alert("Remote endpoint needed", "Paste the VPN-reachable OpenClaw RPC URL first.");
+      return;
+    }
+
+    runOpenClawAction(
+      "remote-config",
+      "configure_openclaw_remote_endpoint",
+      {
+        rpc_url: rpcUrl,
+        label,
+        vpn_required: true,
+      },
+      {
+        successTitle: "Remote OpenClaw endpoint saved",
+        failureTitle: "Remote OpenClaw setup failed",
+      }
+    );
+  }, [openclawRemoteLabel, openclawRemoteRpcUrl, runOpenClawAction]);
+
+  const handleClearOpenClawRemote = useCallback(() => {
+    runOpenClawAction(
+      "remote-clear",
+      "clear_openclaw_remote_endpoint",
+      {},
+      {
+        successTitle: "Remote OpenClaw endpoint cleared",
+        failureTitle: "Remote OpenClaw clear failed",
+      }
+    );
+  }, [runOpenClawAction]);
 
   const refreshPhoneMetadataStatus = useCallback(async () => {
     try {
@@ -1659,6 +1696,19 @@ export default function App() {
       : Boolean(openclawStatus?.openclaw_installed) && openclawGatewayRunning;
 
   useEffect(() => {
+    const remote = openclawStatus?.remote;
+    if (!remote?.configured) {
+      return;
+    }
+    if (remote.endpoint) {
+      setOpenclawRemoteRpcUrl(remote.endpoint);
+    }
+    if (remote.label) {
+      setOpenclawRemoteLabel(remote.label);
+    }
+  }, [openclawStatus]);
+
+  useEffect(() => {
     if (!availableModes.length || availableModes.includes(activeMode)) {
       return;
     }
@@ -1802,7 +1852,35 @@ export default function App() {
               {openclawGatewayRunning ? "Gateway online" : "Gateway not ready"}
             </Text>
             <Text style={styles.reviewSummaryText}>
+              {openclawRemoteActive ? "Remote mode" : "Local mode"}
+            </Text>
+            <Text style={styles.reviewSummaryText}>
               {openclawStatus?.rtk_plugin_installed ? "RTK plugin installed" : "RTK optional"}
+            </Text>
+          </View>
+          <View style={styles.sectionGroup}>
+            <Text style={styles.relationshipLabel}>Shared VPN operator</Text>
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              placeholder="ws://10.0.0.15:18789/rpc"
+              placeholderTextColor="#5f6b84"
+              style={styles.input}
+              value={openclawRemoteRpcUrl}
+              onChangeText={setOpenclawRemoteRpcUrl}
+            />
+            <TextInput
+              autoCapitalize="words"
+              autoCorrect
+              placeholder="Shared VPN operator"
+              placeholderTextColor="#5f6b84"
+              style={styles.input}
+              value={openclawRemoteLabel}
+              onChangeText={setOpenclawRemoteLabel}
+            />
+            <Text style={styles.captureHint}>
+              Point Butler at a VPN-reachable OpenClaw RPC endpoint when you want the heavy operator stack to live in one shared private environment.
             </Text>
           </View>
           <View style={styles.buttonRow}>
@@ -1825,6 +1903,26 @@ export default function App() {
             >
               <Text style={styles.primaryButtonText}>
                 {openclawActionBusy === "install" ? "Installing..." : "Install OpenClaw"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[styles.primaryButton, openclawActionBusy === "remote-config" && styles.buttonDisabled]}
+              disabled={openclawActionBusy !== ""}
+              onPress={handleConfigureOpenClawRemote}
+            >
+              <Text style={styles.primaryButtonText}>
+                {openclawActionBusy === "remote-config" ? "Saving..." : "Use VPN Endpoint"}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.secondaryButton, openclawActionBusy === "remote-clear" && styles.buttonDisabled]}
+              disabled={openclawActionBusy !== ""}
+              onPress={handleClearOpenClawRemote}
+            >
+              <Text style={styles.secondaryButtonText}>
+                {openclawActionBusy === "remote-clear" ? "Clearing..." : "Clear Remote Mode"}
               </Text>
             </TouchableOpacity>
           </View>
