@@ -130,7 +130,20 @@ interface OpenClawStatusSnapshot {
   npm_global_prefix?: string;
   npm_global_bin?: string;
   npm_global_bin_on_path?: boolean;
+  operator_mode?: string;
+  ready?: boolean;
   gateway?: OpenClawGatewayState;
+  remote?: {
+    configured?: boolean;
+    endpoint?: string;
+    label?: string;
+    vpn_required?: boolean;
+    reachable?: boolean;
+    probe?: {
+      summary?: string;
+      error?: string;
+    };
+  };
   openclaw_user_dir?: string;
   extensions_dir?: string;
   rtk_plugin_installed?: boolean;
@@ -1639,7 +1652,11 @@ export default function App() {
   );
   const activeModeMeta = PHONE_MODE_META[activeMode];
   const openclawGatewayRunning = Boolean(openclawStatus?.gateway?.running);
-  const openclawReady = Boolean(openclawStatus?.openclaw_installed) && openclawGatewayRunning;
+  const openclawRemoteActive = Boolean(openclawStatus?.remote?.configured);
+  const openclawReady =
+    typeof openclawStatus?.ready === "boolean"
+      ? openclawStatus.ready
+      : Boolean(openclawStatus?.openclaw_installed) && openclawGatewayRunning;
 
   useEffect(() => {
     if (!availableModes.length || availableModes.includes(activeMode)) {
@@ -1775,7 +1792,7 @@ export default function App() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Operator stack</Text>
           <Text style={styles.cardBody}>
-            OpenClaw is Butler&apos;s built-in local operator layer. The phone stays lightweight while your Mac hosts the heavier agent, gateway, and plugin fabric underneath it.
+            OpenClaw is Butler&apos;s built-in operator layer. The phone stays lightweight while Butler reaches either the paired Mac or a shared VPN-backed operator environment for the heavier agent, gateway, and plugin fabric underneath it.
           </Text>
           <View style={styles.reviewSummaryRow}>
             <Text style={styles.reviewSummaryPill}>
@@ -1891,11 +1908,23 @@ export default function App() {
             <View style={styles.sectionGroup}>
               <Text style={styles.feedMeta}>
                 {openclawReady
-                  ? "Butler's operator stack is online on this Mac."
+                  ? openclawRemoteActive
+                    ? "Butler's operator stack is reachable through the shared private environment."
+                    : "Butler's operator stack is online on this Mac."
+                  : openclawRemoteActive
+                  ? "Butler is pointed at a shared private operator stack, but it is not reachable right now."
                   : openclawStatus.openclaw_installed
                   ? "OpenClaw is installed, but the gateway still needs attention."
                   : "OpenClaw is not installed yet on this Mac."}
               </Text>
+              {openclawStatus.remote?.configured ? (
+                <Text style={styles.feedMeta}>
+                  Remote {openclawStatus.remote.label || "operator stack"}: {openclawStatus.remote.endpoint}
+                </Text>
+              ) : null}
+              {openclawStatus.remote?.probe?.summary ? (
+                <Text style={styles.feedMeta}>{openclawStatus.remote.probe.summary}</Text>
+              ) : null}
               {openclawStatus.openclaw_version ? (
                 <Text style={styles.feedMeta}>CLI {openclawStatus.openclaw_version}</Text>
               ) : null}

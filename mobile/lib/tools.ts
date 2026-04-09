@@ -59,7 +59,7 @@ export const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "openclaw_status",
-      description: "Check whether OpenClaw and its gateway are installed and ready on the local Mac.",
+      description: "Check whether Butler's OpenClaw operator stack is ready, either locally or through a configured VPN endpoint.",
       parameters: {
         type: "object",
         properties: {},
@@ -99,6 +99,43 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "openclaw_configure_local_gateway",
       description: "Set OpenClaw's gateway mode to local and restart the gateway.",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "configure_openclaw_remote_endpoint",
+      description: "Configure Butler to call a shared OpenClaw operator stack over a VPN or private RPC endpoint.",
+      parameters: {
+        type: "object",
+        properties: {
+          rpc_url: {
+            type: "string",
+            description: "VPN-reachable OpenClaw RPC URL, such as ws://10.0.0.15:18789/rpc",
+          },
+          label: {
+            type: "string",
+            description: "Optional human label for the shared operator environment.",
+          },
+          vpn_required: {
+            type: "boolean",
+            description: "Whether Butler should treat the endpoint as reachable only over VPN/private networking.",
+            default: true,
+          },
+        },
+        required: ["rpc_url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "clear_openclaw_remote_endpoint",
+      description: "Clear Butler's configured remote OpenClaw endpoint and fall back to local operator mode.",
       parameters: {
         type: "object",
         properties: {},

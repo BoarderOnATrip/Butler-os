@@ -81,18 +81,32 @@ For first-run product setup, start the desktop app and use the onboarding flow i
 
 ## OpenClaw Operator Stack
 
-Butler can now treat OpenClaw as a first-class local operator layer instead of a hidden dependency.
+Butler can now treat OpenClaw as a first-class operator layer instead of a hidden dependency.
 
 The runtime can:
 
-- inspect OpenClaw and gateway readiness via `openclaw_status`
+- inspect OpenClaw readiness via `openclaw_status`, either on the local Mac or through a configured VPN endpoint
 - install OpenClaw from the official package path via `install_openclaw`
 - set `gateway.mode=local` and restart via `openclaw_configure_local_gateway`
+- point Butler at a shared private operator fabric via `configure_openclaw_remote_endpoint`
+- clear the remote endpoint and fall back to local mode via `clear_openclaw_remote_endpoint`
 - install the gateway service via `openclaw_gateway_install`
 - restart the gateway via `openclaw_gateway_restart`
 - run repair / diagnostics via `openclaw_doctor`
 
-The Android `Act` surface exposes these controls directly once your Mac is paired, so the phone can bootstrap the local operator stack without dropping back to a terminal.
+The Android `Act` surface exposes the operator status directly once your Mac is paired, so the phone can bootstrap the local stack or check the shared private stack without dropping back to a terminal.
+
+If you want OpenClaw to live in a shared safe environment behind VPN instead of on each Mac, configure Butler with a VPN-reachable RPC URL:
+
+```bash
+cd aibutler-core
+python3 -m runtime tool-run \
+  --tool-name configure_openclaw_remote_endpoint \
+  --args '{"rpc_url":"ws://10.0.0.15:18789/rpc","label":"Shared VPN operator","vpn_required":true}' \
+  --approved
+```
+
+Butler will then treat that remote endpoint as the active operator plane and simply call out to it when needed.
 
 ## Optional RTK Integration
 

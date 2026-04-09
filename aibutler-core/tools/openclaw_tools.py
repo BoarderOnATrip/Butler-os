@@ -13,18 +13,24 @@ from __future__ import annotations
 
 import os
 import json
+import socket
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from tools.rtk_tools import OPENCLAW_PLUGIN_DIR
 
 
 OPENCLAW_USER_DIR = Path.home() / ".openclaw"
 OPENCLAW_EXTENSIONS_DIR = OPENCLAW_USER_DIR / "extensions"
+AIBUTLER_CONFIG_PATH = Path.home() / ".aibutler" / "config.json"
 OFFICIAL_INSTALL_COMMAND = "curl -fsSL https://openclaw.ai/install.sh | bash"
 AUTOMATION_INSTALL_COMMAND = "SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install -g openclaw@latest"
+REMOTE_RPC_URL_KEY = "AIBUTLER_OPENCLAW_RPC_URL"
+REMOTE_LABEL_KEY = "AIBUTLER_OPENCLAW_REMOTE_LABEL"
+REMOTE_VPN_REQUIRED_KEY = "AIBUTLER_OPENCLAW_VPN_REQUIRED"
 
 
 def _ok(output: Any) -> dict:
@@ -99,6 +105,134 @@ def _safe_json_loads(raw: str) -> Any | None:
         return json.loads(raw)
     except Exception:
         return None
+
+
+def _load_aibutler_config() -> dict[str, Any]:
+    if not AIBUTLER_CONFIG_PATH.exists():
+        return {}
+    try:
+        payload = json.loads(AIBUTLER_CONFIG_PATH.read_text())
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _save_aibutler_config(config: dict[str, Any]) -> None:
+    AIBUTLER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    AIBUTLER_CONFIG_PATH.write_text(json.dumps(config, indent=2, sort_keys=True))
+
+
+def _boolish(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _normalized_rpc_url(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        return ""
+    if "://" not in cleaned:
+        return f"ws://{cleaned}"
+    return cleaned
+
+
+def _remote_operator_config() -> dict[str, Any]:
+    config = _load_aibutler_config()
+    raw_endpoint = os.environ.get(REMOTE_RPC_URL_KEY, "").strip()
+    source = "env" if raw_endpoint else ""
+    if not raw_endpoint:
+        raw_endpoint = str(config.get(REMOTE_RPC_URL_KEY, "")).strip()
+        if raw_endpoint:
+            source = "config"
+
+    raw_label = os.environ.get(REMOTE_LABEL_KEY, "").strip()
+    if not raw_label:
+        raw_label = str(config.get(REMOTE_LABEL_KEY, "")).strip()
+
+    raw_vpn_required = os.environ.get(REMOTE_VPN_REQUIRED_KEY, "")
+    if raw_vpn_required.strip():
+        vpn_required = _boolish(raw_vpn_required, default=True)
+        if not source:
+            source = "env"
+    else:
+        vpn_required = _boolish(config.get(REMOTE_VPN_REQUIRED_KEY), default=True)
+
+    endpoint = _normalized_rpc_url(raw_endpoint)
+    return {
+        "configured": bool(endpoint),
+        "endpoint": endpoint,
+        "label": raw_label or "Shared VPN operator stack",
+        "vpn_required": vpn_required,
+        "source": source or ("config" if endpoint else ""),
+    }
+
+
+def _default_port_for_scheme(scheme: str) -> int:
+    return {
+        "http": 80,
+        "https": 443,
+        "ws": 80,
+        "wss": 443,
+    }.get(scheme, 80)
+
+
+def _probe_remote_endpoint(endpoint: str) -> dict[str, Any]:
+    if not endpoint:
+        return {
+            "ok": False,
+            "reachable": False,
+            "summary": "No remote OpenClaw endpoint is configured yet.",
+            "host": "",
+            "port": None,
+            "scheme": "",
+            "error": "",
+        }
+
+    parsed = urlparse(endpoint)
+    host = parsed.hostname or ""
+    scheme = parsed.scheme or "ws"
+    port = parsed.port or _default_port_for_scheme(scheme)
+    if not host:
+        return {
+            "ok": False,
+            "reachable": False,
+            "summary": "The configured OpenClaw endpoint is invalid.",
+            "host": "",
+            "port": port,
+            "scheme": scheme,
+            "error": "Missing host",
+        }
+
+    try:
+        with socket.create_connection((host, port), timeout=4):
+            pass
+        return {
+            "ok": True,
+            "reachable": True,
+            "summary": f"Remote OpenClaw endpoint {host}:{port} is reachable.",
+            "host": host,
+            "port": port,
+            "scheme": scheme,
+            "error": "",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reachable": False,
+            "summary": f"Remote OpenClaw endpoint {host}:{port} is not reachable right now.",
+            "host": host,
+            "port": port,
+            "scheme": scheme,
+            "error": str(exc),
+        }
 
 
 def _infer_gateway_running(payload: Any, raw: str, returncode: int) -> bool | None:
@@ -186,7 +320,7 @@ def _installed_rtk_plugin() -> bool:
 
 
 def openclaw_status() -> dict:
-    """Inspect whether OpenClaw is installed and whether the gateway looks healthy."""
+    """Inspect Butler's OpenClaw operator stack, either local or VPN-backed."""
     node_bin = _command_exists("node")
     npm_bin = _command_exists("npm")
     openclaw_bin = _command_exists("openclaw")
@@ -196,23 +330,47 @@ def openclaw_status() -> dict:
     npm_prefix = _npm_prefix(npm_bin)
     npm_global_bin = _npm_global_bin(npm_prefix)
     gateway = _gateway_status(openclaw_bin)
+    remote = _remote_operator_config()
+    remote_probe = _probe_remote_endpoint(remote["endpoint"]) if remote["configured"] else {
+        "ok": False,
+        "reachable": False,
+        "summary": "No remote OpenClaw endpoint is configured yet.",
+        "host": "",
+        "port": None,
+        "scheme": "",
+        "error": "",
+    }
+    operator_mode = "vpn_remote" if remote["configured"] else "local"
+    ready = bool(remote_probe.get("reachable")) if remote["configured"] else bool(gateway.get("running"))
 
     suggested_steps: list[str] = []
-    if not npm_bin:
-        suggested_steps.append("Install Node.js so Butler can install OpenClaw from the official npm package.")
-    elif not openclaw_bin:
+    if remote["configured"]:
+        if not remote_probe.get("reachable"):
+            suggested_steps.append(
+                "Connect to the VPN or private network that hosts your shared OpenClaw environment, then refresh the operator stack."
+            )
+            suggested_steps.append(
+                "Verify the configured OpenClaw RPC URL with `configure_openclaw_remote_endpoint` if the endpoint moved."
+            )
+    else:
+        if not npm_bin:
+            suggested_steps.append("Install Node.js so Butler can install OpenClaw from the official npm package.")
+        elif not openclaw_bin:
+            suggested_steps.append(
+                f"Install OpenClaw with the official installer `{OFFICIAL_INSTALL_COMMAND}` or Butler's automation-safe path `{AUTOMATION_INSTALL_COMMAND}`."
+            )
+        elif not gateway.get("running"):
+            gateway_payload = gateway.get("payload") or {}
+            gateway_last_error = ""
+            if isinstance(gateway_payload, dict):
+                gateway_last_error = str(gateway_payload.get("lastError") or "")
+            if "gateway.mode" in gateway_last_error:
+                suggested_steps.append("Set `gateway.mode=local` with `openclaw_configure_local_gateway`, then restart the gateway.")
+            suggested_steps.append(
+                "Install or repair the OpenClaw gateway with `openclaw_gateway_install`, `openclaw_gateway_restart`, or `openclaw_doctor`."
+            )
         suggested_steps.append(
-            f"Install OpenClaw with the official installer `{OFFICIAL_INSTALL_COMMAND}` or Butler's automation-safe path `{AUTOMATION_INSTALL_COMMAND}`."
-        )
-    elif not gateway.get("running"):
-        gateway_payload = gateway.get("payload") or {}
-        gateway_last_error = ""
-        if isinstance(gateway_payload, dict):
-            gateway_last_error = str(gateway_payload.get("lastError") or "")
-        if "gateway.mode" in gateway_last_error:
-            suggested_steps.append("Set `gateway.mode=local` with `openclaw_configure_local_gateway`, then restart the gateway.")
-        suggested_steps.append(
-            "Install or repair the OpenClaw gateway with `openclaw_gateway_install`, `openclaw_gateway_restart`, or `openclaw_doctor`."
+            "Optional: keep OpenClaw in a shared VPN environment by configuring `configure_openclaw_remote_endpoint`."
         )
 
     if npm_global_bin and not _path_contains(npm_global_bin):
@@ -233,12 +391,69 @@ def openclaw_status() -> dict:
             "npm_global_prefix": npm_prefix,
             "npm_global_bin": npm_global_bin,
             "npm_global_bin_on_path": _path_contains(npm_global_bin),
+            "operator_mode": operator_mode,
+            "ready": ready,
             "gateway": gateway,
+            "remote": {
+                **remote,
+                "reachable": bool(remote_probe.get("reachable")),
+                "probe": remote_probe,
+            },
             "openclaw_user_dir": str(OPENCLAW_USER_DIR),
             "extensions_dir": str(OPENCLAW_EXTENSIONS_DIR),
             "rtk_plugin_installed": _installed_rtk_plugin(),
             "rtk_plugin_dir": str(OPENCLAW_PLUGIN_DIR),
             "suggested_steps": suggested_steps,
+        }
+    )
+
+
+def configure_openclaw_remote_endpoint(
+    rpc_url: str,
+    label: str = "",
+    vpn_required: bool = True,
+) -> dict:
+    """Persist a shared remote OpenClaw endpoint, typically reachable over VPN."""
+    endpoint = _normalized_rpc_url(rpc_url)
+    if not endpoint:
+        return _err("Provide a non-empty OpenClaw RPC URL or host:port.")
+
+    config = _load_aibutler_config()
+    config[REMOTE_RPC_URL_KEY] = endpoint
+    config[REMOTE_LABEL_KEY] = label.strip() or "Shared VPN operator stack"
+    config[REMOTE_VPN_REQUIRED_KEY] = "1" if vpn_required else "0"
+    _save_aibutler_config(config)
+
+    status = openclaw_status()["output"]
+    return _ok(
+        {
+            "changed": True,
+            "message": "Remote OpenClaw endpoint configured.",
+            "endpoint": endpoint,
+            "label": config[REMOTE_LABEL_KEY],
+            "vpn_required": vpn_required,
+            "status": status,
+            "next_steps": status.get("suggested_steps") or [],
+        }
+    )
+
+
+def clear_openclaw_remote_endpoint() -> dict:
+    """Remove Butler's configured remote OpenClaw endpoint and fall back to local mode."""
+    config = _load_aibutler_config()
+    changed = False
+    for key in (REMOTE_RPC_URL_KEY, REMOTE_LABEL_KEY, REMOTE_VPN_REQUIRED_KEY):
+        if key in config:
+            config.pop(key, None)
+            changed = True
+    _save_aibutler_config(config)
+    status = openclaw_status()["output"]
+    return _ok(
+        {
+            "changed": changed,
+            "message": "Remote OpenClaw endpoint cleared." if changed else "No remote OpenClaw endpoint was configured.",
+            "status": status,
+            "next_steps": status.get("suggested_steps") or [],
         }
     )
 
@@ -449,7 +664,7 @@ def openclaw_doctor(apply_fixes: bool = False) -> dict:
 TOOLS = {
     "openclaw_status": {
         "fn": openclaw_status,
-        "description": "Check whether OpenClaw and its gateway are installed and ready on the local Mac.",
+        "description": "Check whether Butler's OpenClaw operator stack is ready, either locally or through a configured VPN endpoint.",
         "params": {},
     },
     "install_openclaw": {
@@ -465,6 +680,20 @@ TOOLS = {
     "openclaw_configure_local_gateway": {
         "fn": openclaw_configure_local_gateway,
         "description": "Set OpenClaw's gateway mode to local and restart the gateway.",
+        "params": {},
+    },
+    "configure_openclaw_remote_endpoint": {
+        "fn": configure_openclaw_remote_endpoint,
+        "description": "Configure Butler to call a shared OpenClaw operator stack through a VPN or private RPC endpoint.",
+        "params": {
+            "rpc_url": "str",
+            "label": "str=''",
+            "vpn_required": "bool=True",
+        },
+    },
+    "clear_openclaw_remote_endpoint": {
+        "fn": clear_openclaw_remote_endpoint,
+        "description": "Clear Butler's configured remote OpenClaw endpoint and fall back to local operator mode.",
         "params": {},
     },
     "openclaw_gateway_restart": {

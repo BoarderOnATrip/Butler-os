@@ -244,6 +244,7 @@ Recommended direction:
 - keep the Butler core agent small, deterministic, and always available
 - give it Paperclip-style powers through a separate power plane, not by bloating the core router
 - treat the phone-side mini-agent as the front door and the delegated worker fabric as the muscle
+- let the heavy operator fabric live either locally or in a shared VPN-backed OpenClaw environment, as long as Butler keeps approvals, provenance, and trust boundaries explicit on the user side
 
 The mini-agent should gain these powers over time:
 

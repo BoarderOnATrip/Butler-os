@@ -417,6 +417,17 @@ TOOL_META = {
         "read_only": True,
         "risk": "low",
     },
+    "configure_openclaw_remote_endpoint": {
+        "category": "integrations",
+        "capability": "general",
+        "risk": "medium",
+        "approval": ApprovalPolicy(required=True, reason="changes Butler's remote OpenClaw endpoint"),
+    },
+    "clear_openclaw_remote_endpoint": {
+        "category": "integrations",
+        "capability": "general",
+        "risk": "low",
+    },
     "install_openclaw": {
         "category": "integrations",
         "capability": "general",
