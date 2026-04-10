@@ -563,13 +563,32 @@ export default function App() {
   const [continuityActionBusy, setContinuityActionBusy] = useState("");
   const [continuityTitle, setContinuityTitle] = useState("Quick handoff");
   const [continuityNote, setContinuityNote] = useState("");
+  const [activeContinuityPacketId, setActiveContinuityPacketId] = useState("");
   const [rooms, setRooms] = useState<ButlerRoom[]>([]);
   const [roomsBusy, setRoomsBusy] = useState(false);
   const [roomActionBusy, setRoomActionBusy] = useState("");
   const [roomTitle, setRoomTitle] = useState("");
   const [roomKind, setRoomKind] = useState("project");
   const [roomSeedNote, setRoomSeedNote] = useState("");
+  const [activeRoomId, setActiveRoomId] = useState("");
   const conversationRef = useRef<any>(null);
+
+  const spotlightContinuityPacket = useCallback((packet?: ContinuityPacket | null) => {
+    if (!packet?.id) {
+      return;
+    }
+    setActiveContinuityPacketId(packet.id);
+    if (packet.room_id) {
+      setActiveRoomId(packet.room_id);
+    }
+  }, []);
+
+  const spotlightRoom = useCallback((room?: ButlerRoom | null) => {
+    if (!room?.room_id) {
+      return;
+    }
+    setActiveRoomId(room.room_id);
+  }, []);
 
   useEffect(() => {
     discoverDesktop().then((url) => {
@@ -1085,7 +1104,7 @@ export default function App() {
 
     setContinuityActionBusy("send-note");
     try {
-      await pushContinuityPacket({
+      const result = await pushContinuityPacket({
         kind: "text",
         title,
         content,
@@ -1095,6 +1114,7 @@ export default function App() {
         metadata: { lane: "quick_handoff" },
         expires_in_minutes: 180,
       });
+      spotlightContinuityPacket(result.packet);
       setContinuityNote("");
       setLastResponse(`Continuity handoff queued for your Mac: ${title}.`);
       await refreshContinuityInbox({ silent: true });
@@ -1105,12 +1125,13 @@ export default function App() {
     } finally {
       setContinuityActionBusy("");
     }
-  }, [continuityNote, continuityTitle, desktopPaired, refreshContinuityInbox]);
+  }, [continuityNote, continuityTitle, desktopPaired, refreshContinuityInbox, spotlightContinuityPacket]);
 
   const handleClaimContinuityPacket = useCallback(async (packetId: string) => {
     setContinuityActionBusy(`claim:${packetId}`);
     try {
-      await claimContinuityPacket(packetId, "phone", 15);
+      const result = await claimContinuityPacket(packetId, "phone", 15);
+      spotlightContinuityPacket(result.packet);
       await refreshContinuityInbox({ silent: true });
       setLastResponse("Continuity packet claimed on this phone.");
     } catch (error: unknown) {
@@ -1120,7 +1141,7 @@ export default function App() {
     } finally {
       setContinuityActionBusy("");
     }
-  }, [refreshContinuityInbox]);
+  }, [refreshContinuityInbox, spotlightContinuityPacket]);
 
   const handleCopyContinuityPacket = useCallback(async (packet: ContinuityPacket) => {
     setContinuityActionBusy(`copy:${packet.id}`);
@@ -1129,6 +1150,9 @@ export default function App() {
       await acknowledgeContinuityPacket(packet.id, "phone", "Copied into phone clipboard.");
       await refreshContinuityInbox({ silent: true });
       setLastResponse(`Copied "${packet.title}" into your phone clipboard.`);
+      if (activeContinuityPacketId === packet.id) {
+        setActiveContinuityPacketId("");
+      }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       setLastResponse(message);
@@ -1136,7 +1160,7 @@ export default function App() {
     } finally {
       setContinuityActionBusy("");
     }
-  }, [refreshContinuityInbox]);
+  }, [activeContinuityPacketId, refreshContinuityInbox]);
 
   const refreshRooms = useCallback(async (options?: { silent?: boolean }) => {
     if (!desktopPaired) {
@@ -1193,6 +1217,7 @@ export default function App() {
       }
       setRoomTitle("");
       setRoomSeedNote("");
+      spotlightRoom(createdRoom ?? null);
       setLastResponse(createdRoom?.title ? `Canonical room ready: ${createdRoom.title}.` : "Canonical room created.");
       await refreshRooms({ silent: true });
     } catch (error: unknown) {
@@ -1202,12 +1227,12 @@ export default function App() {
     } finally {
       setRoomActionBusy("");
     }
-  }, [createRoom, desktopPaired, publishRoomVersion, refreshRooms, roomKind, roomSeedNote, roomTitle]);
+  }, [createRoom, desktopPaired, publishRoomVersion, refreshRooms, roomKind, roomSeedNote, roomTitle, spotlightRoom]);
 
   const handleSendRoomToMac = useCallback(async (room: ButlerRoom) => {
     setRoomActionBusy(`handoff-room:${room.room_id}`);
     try {
-      await pushContinuityPacket({
+      const result = await pushContinuityPacket({
         kind: "room_ref",
         title: `Open room: ${room.title}`,
         content: room.title,
@@ -1223,6 +1248,8 @@ export default function App() {
         },
         expires_in_minutes: 240,
       });
+      spotlightRoom(room);
+      spotlightContinuityPacket(result.packet);
       setLastResponse(`Room queued for your Mac: ${room.title}.`);
       await refreshContinuityInbox({ silent: true });
     } catch (error: unknown) {
@@ -1232,7 +1259,15 @@ export default function App() {
     } finally {
       setRoomActionBusy("");
     }
-  }, [refreshContinuityInbox]);
+  }, [refreshContinuityInbox, spotlightContinuityPacket, spotlightRoom]);
+
+  const handleFocusRoom = useCallback((roomId: string, title: string) => {
+    if (!compactText(roomId)) {
+      return;
+    }
+    setActiveRoomId(roomId);
+    setLastResponse(`Focused room: ${title}.`);
+  }, []);
 
   const resolveCanonicalRoomForRef = useCallback(async (
     sourceRef: string,
@@ -1279,6 +1314,7 @@ export default function App() {
 
       let roomId = "";
       let packetKind = "room_ref";
+      let resolvedRoom: ButlerRoom | null = null;
       if (!normalizedRef.startsWith("pending/")) {
         const room = await resolveCanonicalRoomForRef(
           normalizedRef,
@@ -1286,12 +1322,13 @@ export default function App() {
           options?.kind,
           options?.metadata
         );
+        resolvedRoom = room;
         roomId = room.room_id;
       } else {
         packetKind = "pending_ref";
       }
 
-      await pushContinuityPacket({
+      const result = await pushContinuityPacket({
         kind: packetKind,
         title: `Open on Mac: ${title}`,
         content: options?.summary || title,
@@ -1309,6 +1346,10 @@ export default function App() {
         },
         expires_in_minutes: 240,
       });
+      spotlightContinuityPacket(result.packet);
+      if (resolvedRoom) {
+        spotlightRoom(resolvedRoom);
+      }
       if (options?.setStatusMessage !== false) {
         setLastResponse(`Queued "${title}" for your Mac.`);
       }
@@ -1329,7 +1370,7 @@ export default function App() {
     } finally {
       setRoomActionBusy("");
     }
-  }, [refreshContinuityInbox, resolveCanonicalRoomForRef]);
+  }, [refreshContinuityInbox, resolveCanonicalRoomForRef, spotlightContinuityPacket, spotlightRoom]);
 
   const handleSendRefToMac = useCallback(async (
     sourceRef: string,
@@ -2230,6 +2271,16 @@ export default function App() {
     [continuityItems]
   );
 
+  const continuitySpotlightItem = useMemo(
+    () => liveContinuityItems.find((item) => item.id === activeContinuityPacketId) ?? liveContinuityItems[0] ?? null,
+    [activeContinuityPacketId, liveContinuityItems]
+  );
+
+  const focusedRoom = useMemo(
+    () => rooms.find((room) => room.room_id === activeRoomId) ?? rooms[0] ?? null,
+    [activeRoomId, rooms]
+  );
+
   const reviewPendingItems = [...pendingItems].sort((left, right) => {
     const rank = (status?: ReviewStatus) => {
       switch (status) {
@@ -2441,6 +2492,16 @@ export default function App() {
               {liveContinuityItems.length === 1 ? "" : "s"}
             </Text>
           </View>
+          {continuitySpotlightItem ? (
+            <View style={styles.spotlightPanel}>
+              <Text style={styles.spotlightLabel}>Current handoff</Text>
+              <Text style={styles.spotlightTitle}>{continuitySpotlightItem.title}</Text>
+              <Text style={styles.spotlightMeta}>
+                {[continuitySpotlightItem.kind, continuitySpotlightItem.status || "pending"].filter(Boolean).join(" • ")}
+                {continuitySpotlightItem.updated_at ? ` • ${formatMetadataTimestamp(continuitySpotlightItem.updated_at)}` : ""}
+              </Text>
+            </View>
+          ) : null}
           <View style={styles.buttonRow}>
             <TouchableOpacity
               style={[styles.secondaryButton, continuityBusy && styles.buttonDisabled]}
@@ -2510,9 +2571,15 @@ export default function App() {
           {continuityItems.length ? (
             <View style={styles.pendingList}>
               {continuityItems.map((packet) => (
-                <View key={packet.id} style={styles.pendingRow}>
+                <View
+                  key={packet.id}
+                  style={[styles.pendingRow, activeContinuityPacketId === packet.id && styles.pendingRowActive]}
+                >
                   <View style={styles.pendingHeaderRow}>
                     <View style={styles.pendingMeta}>
+                      {activeContinuityPacketId === packet.id ? (
+                        <Text style={[styles.metaBadge, styles.metaBadgeReady]}>Current handoff</Text>
+                      ) : null}
                       <Text style={styles.pendingTitle}>{packet.title}</Text>
                       <Text style={styles.pendingKind}>
                         {[packet.kind, packet.source_device, packet.status].filter(Boolean).join(" • ")}
@@ -2536,6 +2603,17 @@ export default function App() {
                     </Text>
                   ) : null}
                   <View style={styles.buttonRow}>
+                    {packet.room_id ? (
+                      <TouchableOpacity
+                        style={styles.secondaryButton}
+                        disabled={continuityActionBusy !== ""}
+                        onPress={() => handleFocusRoom(packet.room_id || "", packet.title)}
+                      >
+                        <Text style={styles.secondaryButtonText}>
+                          {activeRoomId === packet.room_id ? "Room Focused" : "Focus Room"}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
                     {packet.status !== "consumed" ? (
                       <TouchableOpacity
                         style={[styles.secondaryButton, continuityActionBusy === `claim:${packet.id}` && styles.buttonDisabled]}
@@ -2580,6 +2658,17 @@ export default function App() {
             </Text>
             <Text style={styles.reviewSummaryText}>{rooms.length} recent room{rooms.length === 1 ? "" : "s"}</Text>
           </View>
+          {focusedRoom ? (
+            <View style={styles.spotlightPanel}>
+              <Text style={styles.spotlightLabel}>Focused room</Text>
+              <Text style={styles.spotlightTitle}>{focusedRoom.title}</Text>
+              <Text style={styles.spotlightMeta}>
+                {[focusedRoom.kind, focusedRoom.status, focusedRoom.current_published_version ? "published" : "draft-only"]
+                  .filter(Boolean)
+                  .join(" • ")}
+              </Text>
+            </View>
+          ) : null}
           <TextInput
             autoCapitalize="sentences"
             autoCorrect
@@ -2634,9 +2723,15 @@ export default function App() {
           {rooms.length ? (
             <View style={styles.pendingList}>
               {rooms.map((room) => (
-                <View key={room.room_id} style={styles.pendingRow}>
+                <View
+                  key={room.room_id}
+                  style={[styles.pendingRow, activeRoomId === room.room_id && styles.pendingRowActive]}
+                >
                   <View style={styles.pendingHeaderRow}>
                     <View style={styles.pendingMeta}>
+                      {activeRoomId === room.room_id ? (
+                        <Text style={[styles.metaBadge, styles.metaBadgeReady]}>Focused room</Text>
+                      ) : null}
                       <Text style={styles.pendingTitle}>{room.title}</Text>
                       <Text style={styles.pendingKind}>
                         {[room.kind, room.status, room.current_published_version ? "published" : "draft-only"].filter(Boolean).join(" • ")}
@@ -2648,6 +2743,15 @@ export default function App() {
                   ) : null}
                   <Text style={styles.feedMeta}>ID {room.room_id}</Text>
                   <View style={styles.buttonRow}>
+                    <TouchableOpacity
+                      style={styles.secondaryButton}
+                      disabled={!desktopPaired || roomActionBusy !== ""}
+                      onPress={() => handleFocusRoom(room.room_id, room.title)}
+                    >
+                      <Text style={styles.secondaryButtonText}>
+                        {activeRoomId === room.room_id ? "Focused" : "Focus"}
+                      </Text>
+                    </TouchableOpacity>
                     <TouchableOpacity
                       style={[styles.secondaryButton, roomActionBusy === `handoff-room:${room.room_id}` && styles.buttonDisabled]}
                       disabled={!desktopPaired || roomActionBusy !== ""}
@@ -4159,6 +4263,10 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 4,
   },
+  pendingRowActive: {
+    borderColor: "#7cf0bb",
+    backgroundColor: "#132032",
+  },
   pendingMeta: {
     gap: 2,
     flex: 1,
@@ -4356,6 +4464,31 @@ const styles = StyleSheet.create({
   sectionGroup: {
     gap: 10,
     marginTop: 4,
+  },
+  spotlightPanel: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#29415b",
+    backgroundColor: "#111b2a",
+    padding: 12,
+    gap: 4,
+  },
+  spotlightLabel: {
+    color: "#7cf0bb",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+  },
+  spotlightTitle: {
+    color: "#eef4fc",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  spotlightMeta: {
+    color: "#8ea0bf",
+    fontSize: 12,
+    lineHeight: 18,
   },
   relationshipMetaText: {
     color: "#a8b5cc",

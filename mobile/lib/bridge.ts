@@ -43,6 +43,12 @@ export interface ContinuityPacket {
   updated_at?: string;
 }
 
+export interface ContinuityPacketMutationResult {
+  ok?: boolean;
+  packet?: ContinuityPacket | null;
+  content_length?: number;
+}
+
 export interface ButlerRoom {
   id: string;
   room_id: string;
@@ -318,7 +324,7 @@ export async function pushContinuityPacket(payload: {
   version_id?: string;
   refs?: string[];
   expires_in_minutes?: number;
-}): Promise<unknown> {
+}): Promise<ContinuityPacketMutationResult> {
   if (!bridgeUrl || !bridgeToken) {
     throw new Error("Desktop bridge not connected.");
   }
@@ -339,7 +345,7 @@ export async function acknowledgeContinuityPacket(
   packetId: string,
   actorDevice = "phone",
   note = ""
-): Promise<unknown> {
+): Promise<ContinuityPacketMutationResult> {
   if (!bridgeUrl || !bridgeToken) {
     throw new Error("Desktop bridge not connected.");
   }
@@ -360,7 +366,7 @@ export async function claimContinuityPacket(
   packetId: string,
   actorDevice = "phone",
   leaseMinutes = 15
-): Promise<unknown> {
+): Promise<ContinuityPacketMutationResult> {
   if (!bridgeUrl || !bridgeToken) {
     throw new Error("Desktop bridge not connected.");
   }
@@ -392,7 +398,10 @@ export async function getDesktopClipboard(): Promise<{ content: string; preview?
   return res.json();
 }
 
-export async function setDesktopClipboard(content: string, sourceDevice = "phone"): Promise<unknown> {
+export async function setDesktopClipboard(
+  content: string,
+  sourceDevice = "phone"
+): Promise<ContinuityPacketMutationResult> {
   if (!bridgeUrl || !bridgeToken) {
     throw new Error("Desktop bridge not connected.");
   }
