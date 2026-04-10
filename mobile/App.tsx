@@ -1162,6 +1162,43 @@ export default function App() {
     }
   }, [activeContinuityPacketId, refreshContinuityInbox]);
 
+  const continuityPacketSupportsOpen = useCallback((packet: ContinuityPacket) => {
+    return Boolean(packet.room_id || packet.refs?.length);
+  }, []);
+
+  const handleOpenContinuityPacket = useCallback((packet: ContinuityPacket) => {
+    spotlightContinuityPacket(packet);
+    const primaryRef = packet.refs?.find((ref) => compactText(ref)) || "";
+
+    if (primaryRef.startsWith("pending/")) {
+      focusMode("review", `Opened ${packet.title} in Review.`);
+      return;
+    }
+    if (
+      primaryRef.startsWith("people/")
+      || primaryRef.startsWith("organizations/")
+      || primaryRef.startsWith("places/")
+      || primaryRef.startsWith("conversations/")
+    ) {
+      focusMode("people", `Opened ${packet.title} in People.`);
+      return;
+    }
+    if (packet.room_id) {
+      setActiveRoomId(packet.room_id);
+      focusMode("act", `Opened ${packet.title} in Canonical rooms.`);
+      return;
+    }
+    focusMode("act", `Opened ${packet.title} in Continuity lane.`);
+  }, [focusMode, spotlightContinuityPacket]);
+
+  const handlePrimaryContinuityAction = useCallback(async (packet: ContinuityPacket) => {
+    if (continuityPacketSupportsOpen(packet)) {
+      handleOpenContinuityPacket(packet);
+      return;
+    }
+    await handleCopyContinuityPacket(packet);
+  }, [continuityPacketSupportsOpen, handleCopyContinuityPacket, handleOpenContinuityPacket]);
+
   const refreshRooms = useCallback(async (options?: { silent?: boolean }) => {
     if (!desktopPaired) {
       setRooms([]);
@@ -2281,6 +2318,30 @@ export default function App() {
     [activeRoomId, rooms]
   );
 
+  useEffect(() => {
+    if (!liveContinuityItems.length) {
+      if (activeContinuityPacketId) {
+        setActiveContinuityPacketId("");
+      }
+      return;
+    }
+    if (!activeContinuityPacketId || !liveContinuityItems.some((item) => item.id === activeContinuityPacketId)) {
+      setActiveContinuityPacketId(liveContinuityItems[0].id);
+    }
+  }, [activeContinuityPacketId, liveContinuityItems]);
+
+  useEffect(() => {
+    if (!rooms.length) {
+      if (activeRoomId) {
+        setActiveRoomId("");
+      }
+      return;
+    }
+    if (!activeRoomId || !rooms.some((room) => room.room_id === activeRoomId)) {
+      setActiveRoomId(rooms[0].room_id);
+    }
+  }, [activeRoomId, rooms]);
+
   const reviewPendingItems = [...pendingItems].sort((left, right) => {
     const rank = (status?: ReviewStatus) => {
       switch (status) {
@@ -2437,6 +2498,57 @@ export default function App() {
           </View>
         ) : null}
 
+        {activeMode === "home" && desktopPaired && continuitySpotlightItem ? (
+          <View style={styles.card}>
+            <Text style={styles.cardEyebrow}>Continuity</Text>
+            <Text style={styles.cardTitle}>Latest handoff</Text>
+            <View style={styles.reviewSummaryRow}>
+              <Text style={styles.reviewSummaryPill}>
+                {continuitySpotlightItem.id === activeContinuityPacketId ? "Current handoff" : "Live packet"}
+              </Text>
+              <Text style={styles.reviewSummaryText}>
+                {[continuitySpotlightItem.kind, continuitySpotlightItem.source_device].filter(Boolean).join(" • ")}
+              </Text>
+            </View>
+            <Text style={styles.pendingTitle}>{continuitySpotlightItem.title}</Text>
+            {continuitySpotlightItem.room_id ? (
+              <Text style={styles.feedMeta}>Room {continuitySpotlightItem.room_id}</Text>
+            ) : null}
+            {continuitySpotlightItem.refs?.length ? (
+              <Text style={styles.feedMeta}>Refs {continuitySpotlightItem.refs.slice(0, 3).join(" · ")}</Text>
+            ) : null}
+            {continuitySpotlightItem.content ? (
+              <Text style={styles.cardBody} numberOfLines={3}>
+                {continuitySpotlightItem.content}
+              </Text>
+            ) : null}
+            <View style={styles.buttonRow}>
+              <TouchableOpacity
+                style={[
+                  styles.primaryButton,
+                  continuityActionBusy === `copy:${continuitySpotlightItem.id}` && styles.buttonDisabled,
+                ]}
+                disabled={continuityActionBusy !== ""}
+                onPress={() => handlePrimaryContinuityAction(continuitySpotlightItem)}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {continuityPacketSupportsOpen(continuitySpotlightItem)
+                    ? "Open Here"
+                    : continuityActionBusy === `copy:${continuitySpotlightItem.id}`
+                    ? "Copying..."
+                    : "Copy To Phone"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={() => focusMode("act", `Opened continuity lane for ${continuitySpotlightItem.title}.`)}
+              >
+                <Text style={styles.secondaryButtonText}>See All</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
+
         {activeMode === "act" && enabledModules.has("pairing") ? (
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Secure Mac pairing</Text>
@@ -2500,6 +2612,49 @@ export default function App() {
                 {[continuitySpotlightItem.kind, continuitySpotlightItem.status || "pending"].filter(Boolean).join(" • ")}
                 {continuitySpotlightItem.updated_at ? ` • ${formatMetadataTimestamp(continuitySpotlightItem.updated_at)}` : ""}
               </Text>
+              {continuitySpotlightItem.room_id ? (
+                <Text style={styles.feedMeta}>Room {continuitySpotlightItem.room_id}</Text>
+              ) : null}
+              {continuitySpotlightItem.refs?.length ? (
+                <Text style={styles.feedMeta}>Refs {continuitySpotlightItem.refs.slice(0, 3).join(" · ")}</Text>
+              ) : null}
+              {continuitySpotlightItem.content ? (
+                <Text style={styles.pendingContent} numberOfLines={3}>
+                  {continuitySpotlightItem.content}
+                </Text>
+              ) : null}
+              <View style={styles.buttonRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.primaryButton,
+                    continuityActionBusy === `copy:${continuitySpotlightItem.id}` && styles.buttonDisabled,
+                  ]}
+                  disabled={continuityActionBusy !== ""}
+                  onPress={() => handlePrimaryContinuityAction(continuitySpotlightItem)}
+                >
+                  <Text style={styles.primaryButtonText}>
+                    {continuityPacketSupportsOpen(continuitySpotlightItem)
+                      ? "Open Here"
+                      : continuityActionBusy === `copy:${continuitySpotlightItem.id}`
+                      ? "Copying..."
+                      : "Copy To Phone"}
+                  </Text>
+                </TouchableOpacity>
+                {continuitySpotlightItem.status !== "consumed" ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.secondaryButton,
+                      continuityActionBusy === `claim:${continuitySpotlightItem.id}` && styles.buttonDisabled,
+                    ]}
+                    disabled={continuityActionBusy !== ""}
+                    onPress={() => handleClaimContinuityPacket(continuitySpotlightItem.id)}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {continuityActionBusy === `claim:${continuitySpotlightItem.id}` ? "Claiming..." : "Claim"}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             </View>
           ) : null}
           <View style={styles.buttonRow}>
@@ -2568,9 +2723,9 @@ export default function App() {
               Pair your Mac first. Continuity packets ride over the trusted Butler bridge so the phone and desktop stay in one execution thread.
             </Text>
           ) : null}
-          {continuityItems.length ? (
+          {liveContinuityItems.length ? (
             <View style={styles.pendingList}>
-              {continuityItems.map((packet) => (
+              {liveContinuityItems.map((packet) => (
                 <View
                   key={packet.id}
                   style={[styles.pendingRow, activeContinuityPacketId === packet.id && styles.pendingRowActive]}
@@ -2603,6 +2758,15 @@ export default function App() {
                     </Text>
                   ) : null}
                   <View style={styles.buttonRow}>
+                    {continuityPacketSupportsOpen(packet) ? (
+                      <TouchableOpacity
+                        style={styles.primaryButton}
+                        disabled={continuityActionBusy !== ""}
+                        onPress={() => handleOpenContinuityPacket(packet)}
+                      >
+                        <Text style={styles.primaryButtonText}>Open Here</Text>
+                      </TouchableOpacity>
+                    ) : null}
                     {packet.room_id ? (
                       <TouchableOpacity
                         style={styles.secondaryButton}
@@ -2667,6 +2831,21 @@ export default function App() {
                   .filter(Boolean)
                   .join(" • ")}
               </Text>
+              {focusedRoom.source_refs?.length ? (
+                <Text style={styles.feedMeta}>Refs {focusedRoom.source_refs.slice(0, 3).join(" · ")}</Text>
+              ) : null}
+              <Text style={styles.feedMeta}>ID {focusedRoom.room_id}</Text>
+              <View style={styles.buttonRow}>
+                <TouchableOpacity
+                  style={[styles.primaryButton, roomActionBusy === `handoff-room:${focusedRoom.room_id}` && styles.buttonDisabled]}
+                  disabled={!desktopPaired || roomActionBusy !== ""}
+                  onPress={() => handleSendRoomToMac(focusedRoom)}
+                >
+                  <Text style={styles.primaryButtonText}>
+                    {roomActionBusy === `handoff-room:${focusedRoom.room_id}` ? "Sending..." : "Continue on Mac"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ) : null}
           <TextInput
