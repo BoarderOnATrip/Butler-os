@@ -231,6 +231,40 @@ class RoomResolveRequest(BaseModel):
     created_by: str = "mobile"
 
 
+class SwarmContractCreateRequest(BaseModel):
+    title: str
+    objective: str
+    template: str = ""
+    room_id: str | None = None
+    room_kind: str = "project"
+    target: str = "local_desktop"
+    launcher: str = "desktop"
+    agents: list[dict] = Field(default_factory=list)
+    deployment_policy: dict = Field(default_factory=dict)
+    metadata: dict = Field(default_factory=dict)
+    source_refs: list[str] = Field(default_factory=list)
+    created_by: str = "mobile"
+
+
+class SwarmLaunchRequest(BaseModel):
+    target: str | None = None
+    launcher: str | None = None
+    vpn_ssh_target: str = ""
+    remote_workdir: str = ""
+    remote_python: str = "python3"
+    dry_run: bool = False
+    created_by: str = "mobile"
+
+
+class SwarmVPNBootstrapRequest(BaseModel):
+    ssh_target: str = ""
+    remote_workdir: str = "~/Butler-os/aibutler-core"
+    repo_url: str = "https://github.com/BoarderOnATrip/Butler-os.git"
+    branch: str = "main"
+    remote_python: str = "python3"
+    execute: bool = False
+
+
 def _desktop_get_clipboard() -> str:
     result = subprocess.run(["pbpaste"], capture_output=True)
     return result.stdout.decode("utf-8", errors="replace")
@@ -534,6 +568,133 @@ def publish_version(version_id: str, req: PublishDraftRequest, _: None = Depends
         raise HTTPException(status_code=404, detail="Version not found.")
     room = runtime.get_room(version.room_id)
     return {"ok": True, "room": room.to_dict() if room else None, "version": version.to_dict()}
+
+
+@app.post("/swarm/contracts")
+def create_swarm_contract(req: SwarmContractCreateRequest, _: None = Depends(_require_pairing_token)):
+    """Create a persisted swarm deployment contract bound to a Butler room."""
+    session = _get_session()
+    try:
+        contract = runtime.create_swarm_contract(
+            title=req.title,
+            objective=req.objective,
+            template=req.template,
+            room_id=req.room_id,
+            room_kind=req.room_kind,
+            target=req.target,
+            launcher=req.launcher,
+            agents=req.agents or None,
+            deployment_policy=req.deployment_policy or None,
+            metadata=req.metadata,
+            source_refs=req.source_refs,
+            created_by=req.created_by,
+            session_id=session.id,
+        )
+        return {"ok": True, "contract": contract.to_dict()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/swarm/contracts")
+def list_swarm_contracts(
+    room_id: str | None = None,
+    status: str | None = None,
+    limit: int = 25,
+    _: None = Depends(_require_pairing_token),
+):
+    """List recent persisted swarm contracts."""
+    try:
+        contracts = runtime.list_swarm_contracts(room_id=room_id, status=status, limit=limit)
+        return {"ok": True, "contracts": [contract.to_dict() for contract in contracts]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/swarm/contracts/{contract_id}")
+def get_swarm_contract(contract_id: str, _: None = Depends(_require_pairing_token)):
+    """Fetch one persisted swarm contract."""
+    contract = runtime.get_swarm_contract(contract_id)
+    if not contract:
+        raise HTTPException(status_code=404, detail="Swarm contract not found.")
+    return {"ok": True, "contract": contract.to_dict()}
+
+
+@app.post("/swarm/contracts/{contract_id}/launch")
+def launch_swarm_contract(contract_id: str, req: SwarmLaunchRequest, _: None = Depends(_require_pairing_token)):
+    """Launch a swarm contract locally or via a VPN SSH target."""
+    session = _get_session()
+    try:
+        output = runtime.launch_swarm_contract(
+            contract_id,
+            target=req.target,
+            launcher=req.launcher,
+            vpn_ssh_target=req.vpn_ssh_target,
+            remote_workdir=req.remote_workdir,
+            remote_python=req.remote_python,
+            dry_run=req.dry_run,
+            created_by=req.created_by,
+            session_id=session.id,
+        )
+        return {"ok": True, **output}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/swarm/runs")
+def list_swarm_runs(
+    contract_id: str | None = None,
+    room_id: str | None = None,
+    status: str | None = None,
+    limit: int = 25,
+    _: None = Depends(_require_pairing_token),
+):
+    """List recent swarm runs."""
+    try:
+        runs = runtime.list_swarm_runs(contract_id=contract_id, room_id=room_id, status=status, limit=limit)
+        return {"ok": True, "runs": [run.to_dict() for run in runs]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/swarm/runs/{run_id}")
+def get_swarm_run(run_id: str, _: None = Depends(_require_pairing_token)):
+    """Fetch one swarm run."""
+    run = runtime.get_swarm_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Swarm run not found.")
+    return {"ok": True, "run": run.to_dict()}
+
+
+@app.get("/swarm/runs/{run_id}/report")
+def get_swarm_run_report(run_id: str, _: None = Depends(_require_pairing_token)):
+    """Fetch the human-readable report for one swarm run."""
+    report = runtime.get_swarm_run_report(run_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Swarm run report not found.")
+    return {"ok": True, "report": report}
+
+
+@app.post("/swarm/bootstrap/vpn")
+def build_swarm_vpn_bootstrap(req: SwarmVPNBootstrapRequest, _: None = Depends(_require_pairing_token)):
+    """Generate or execute the VPN worker bootstrap script."""
+    try:
+        output = runtime.build_swarm_vpn_bootstrap(
+            ssh_target=req.ssh_target,
+            remote_workdir=req.remote_workdir,
+            repo_url=req.repo_url,
+            branch=req.branch,
+            remote_python=req.remote_python,
+            execute=req.execute,
+        )
+        return {"ok": True, "bootstrap": output}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/continuity/inbox")

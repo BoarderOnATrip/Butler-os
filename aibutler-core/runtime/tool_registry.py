@@ -16,6 +16,7 @@ from tools.context_tools import TOOLS as CONTEXT_TOOLS
 from tools.relationship_tools import TOOLS as RELATIONSHIP_TOOLS
 from tools.openclaw_tools import TOOLS as OPENCLAW_TOOLS
 from tools.rtk_tools import TOOLS as RTK_TOOLS
+from tools.swarm_tools import TOOLS as SWARM_TOOLS
 
 DEFAULT_TOOL_META = {
     "category": "general",
@@ -482,6 +483,52 @@ TOOL_META = {
         "risk": "medium",
         "approval": ApprovalPolicy(required=True, reason="installs OpenClaw plugin files into the local user profile"),
     },
+    "create_swarm_contract": {
+        "category": "swarm",
+        "capability": "swarm",
+        "risk": "medium",
+    },
+    "get_swarm_contract": {
+        "category": "swarm",
+        "capability": "swarm",
+        "read_only": True,
+        "risk": "low",
+    },
+    "list_swarm_contracts": {
+        "category": "swarm",
+        "capability": "swarm",
+        "read_only": True,
+        "risk": "low",
+    },
+    "launch_swarm_contract": {
+        "category": "swarm",
+        "capability": "swarm",
+        "risk": "high",
+        "approval": ApprovalPolicy(required=True, reason="launches a local or remote swarm runner"),
+    },
+    "get_swarm_run": {
+        "category": "swarm",
+        "capability": "swarm",
+        "read_only": True,
+        "risk": "low",
+    },
+    "list_swarm_runs": {
+        "category": "swarm",
+        "capability": "swarm",
+        "read_only": True,
+        "risk": "low",
+    },
+    "get_swarm_run_report": {
+        "category": "swarm",
+        "capability": "swarm",
+        "read_only": True,
+        "risk": "low",
+    },
+    "build_swarm_vpn_bootstrap": {
+        "category": "swarm",
+        "capability": "swarm",
+        "risk": "medium",
+    },
 }
 
 
@@ -497,6 +544,7 @@ def _iter_raw_tools() -> dict:
         **RELATIONSHIP_TOOLS,
         **OPENCLAW_TOOLS,
         **RTK_TOOLS,
+        **SWARM_TOOLS,
         **plugin_tools,
     }
 

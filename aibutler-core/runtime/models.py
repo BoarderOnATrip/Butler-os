@@ -392,6 +392,206 @@ class ButlerVersion:
 
 
 @dataclass
+class SwarmAgentSpec:
+    """Static agent definition inside a swarm deployment contract."""
+
+    id: str
+    title: str
+    role: str
+    objective: str
+    depends_on: list[str] = field(default_factory=list)
+    max_iterations: int = 4
+    tool_hints: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SwarmAgentSpec":
+        return cls(
+            id=data.get("id", ""),
+            title=data.get("title", "Untitled agent"),
+            role=data.get("role", "generalist"),
+            objective=data.get("objective", ""),
+            depends_on=list(data.get("depends_on", [])),
+            max_iterations=int(data.get("max_iterations", 4) or 4),
+            tool_hints=list(data.get("tool_hints", [])),
+            metadata=data.get("metadata", {}),
+        )
+
+
+@dataclass
+class SwarmAgentState:
+    """Runtime state for one deployed agent inside a swarm run."""
+
+    agent_id: str
+    title: str
+    role: str
+    objective: str = ""
+    depends_on: list[str] = field(default_factory=list)
+    status: str = "planned"
+    task_id: str | None = None
+    result_summary: str = ""
+    error: str = ""
+    started_at: str | None = None
+    completed_at: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SwarmAgentState":
+        return cls(
+            agent_id=data.get("agent_id") or data.get("id", ""),
+            title=data.get("title", "Untitled agent"),
+            role=data.get("role", "generalist"),
+            objective=data.get("objective", ""),
+            depends_on=list(data.get("depends_on", [])),
+            status=data.get("status", "planned"),
+            task_id=data.get("task_id"),
+            result_summary=data.get("result_summary", ""),
+            error=data.get("error", ""),
+            started_at=data.get("started_at"),
+            completed_at=data.get("completed_at"),
+            metadata=data.get("metadata", {}),
+        )
+
+
+@dataclass
+class SwarmDeploymentPolicy:
+    """Execution policy attached to a swarm contract."""
+
+    definition_of_done: list[str] = field(default_factory=list)
+    oversight_triggers: list[str] = field(default_factory=list)
+    tool_policy: dict[str, Any] = field(default_factory=dict)
+    budget: dict[str, Any] = field(default_factory=dict)
+    launcher_config: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "SwarmDeploymentPolicy":
+        payload = data or {}
+        return cls(
+            definition_of_done=list(payload.get("definition_of_done", [])),
+            oversight_triggers=list(payload.get("oversight_triggers", [])),
+            tool_policy=payload.get("tool_policy", {}),
+            budget=payload.get("budget", {}),
+            launcher_config=payload.get("launcher_config", {}),
+        )
+
+
+@dataclass
+class SwarmContract:
+    """Persistent deployment contract for a swarm bound to a Butler room."""
+
+    id: str
+    room_id: str
+    title: str
+    objective: str
+    template: str = "planning"
+    target: str = "local_desktop"
+    launcher: str = "desktop"
+    status: str = "draft"
+    agents: list[SwarmAgentSpec] = field(default_factory=list)
+    deployment_policy: SwarmDeploymentPolicy = field(default_factory=SwarmDeploymentPolicy)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    source_refs: list[str] = field(default_factory=list)
+    created_by: str = ""
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["contract_id"] = self.id
+        data["agents"] = [agent.to_dict() for agent in self.agents]
+        data["deployment_policy"] = self.deployment_policy.to_dict()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SwarmContract":
+        return cls(
+            id=data.get("id") or data.get("contract_id", ""),
+            room_id=data.get("room_id", ""),
+            title=data.get("title", "Untitled swarm"),
+            objective=data.get("objective", ""),
+            template=data.get("template", "planning"),
+            target=data.get("target", "local_desktop"),
+            launcher=data.get("launcher", "desktop"),
+            status=data.get("status", "draft"),
+            agents=[SwarmAgentSpec.from_dict(agent) for agent in data.get("agents", []) if isinstance(agent, dict)],
+            deployment_policy=SwarmDeploymentPolicy.from_dict(data.get("deployment_policy")),
+            metadata=data.get("metadata", {}),
+            source_refs=list(data.get("source_refs", [])),
+            created_by=data.get("created_by", ""),
+            created_at=data.get("created_at", utc_now()),
+            updated_at=data.get("updated_at", utc_now()),
+        )
+
+
+@dataclass
+class SwarmRun:
+    """One launched execution of a swarm deployment contract."""
+
+    id: str
+    contract_id: str
+    room_id: str
+    title: str
+    template: str = "planning"
+    target: str = "local_desktop"
+    launcher: str = "desktop"
+    execution_backend: str = "local_process"
+    status: str = "staged"
+    log_path: str = ""
+    command: str = ""
+    pid: int | None = None
+    remote_job_id: str = ""
+    summary: str = ""
+    report_path: str = ""
+    agent_states: list[SwarmAgentState] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utc_now)
+    launched_at: str | None = None
+    completed_at: str | None = None
+    updated_at: str = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["run_id"] = self.id
+        data["agent_states"] = [state.to_dict() for state in self.agent_states]
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SwarmRun":
+        return cls(
+            id=data.get("id") or data.get("run_id", ""),
+            contract_id=data.get("contract_id", ""),
+            room_id=data.get("room_id", ""),
+            title=data.get("title", "Untitled swarm run"),
+            template=data.get("template", "planning"),
+            target=data.get("target", "local_desktop"),
+            launcher=data.get("launcher", "desktop"),
+            execution_backend=data.get("execution_backend", "local_process"),
+            status=data.get("status", "staged"),
+            log_path=data.get("log_path", ""),
+            command=data.get("command", ""),
+            pid=data.get("pid"),
+            remote_job_id=data.get("remote_job_id", ""),
+            summary=data.get("summary", ""),
+            report_path=data.get("report_path", ""),
+            agent_states=[SwarmAgentState.from_dict(state) for state in data.get("agent_states", []) if isinstance(state, dict)],
+            metadata=data.get("metadata", {}),
+            created_at=data.get("created_at", utc_now()),
+            launched_at=data.get("launched_at"),
+            completed_at=data.get("completed_at"),
+            updated_at=data.get("updated_at", utc_now()),
+        )
+
+
+@dataclass
 class ContinuityPacket:
     """Cross-device handoff packet for phone/desktop continuity."""
 

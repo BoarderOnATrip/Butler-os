@@ -6,12 +6,78 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 
 from runtime.engine import ButlerRuntime
 
 
 def _print(data) -> None:
     print(json.dumps(data, indent=2, default=str))
+
+
+_TERMINAL_SWARM_STATUSES = {"completed", "failed", "blocked", "awaiting_oversight"}
+
+
+def _swarm_observation(run) -> dict:
+    return {
+        "run_id": run.id,
+        "status": run.status,
+        "summary": run.summary,
+        "updated_at": run.updated_at,
+        "agents": [
+            {
+                "agent_id": state.agent_id,
+                "title": state.title,
+                "status": state.status,
+                "result_summary": state.result_summary,
+                "error": state.error,
+            }
+            for state in run.agent_states
+        ],
+    }
+
+
+def _watch_swarm_run(
+    runtime: ButlerRuntime,
+    run_id: str,
+    *,
+    interval_seconds: float = 1.0,
+    timeout_seconds: float = 60.0,
+    show_report: bool = False,
+) -> dict:
+    deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+    last_signature = ""
+    observations: list[dict] = []
+
+    while True:
+        run = runtime.get_swarm_run(run_id)
+        if not run:
+            return {"error": "not found", "run_id": run_id, "observations": observations}
+
+        observation = _swarm_observation(run)
+        signature = json.dumps(observation, sort_keys=True, default=str)
+        if signature != last_signature:
+            print(json.dumps({"watch": observation}, indent=2, default=str))
+            observations.append(observation)
+            last_signature = signature
+
+        if run.status in _TERMINAL_SWARM_STATUSES:
+            return {
+                "timed_out": False,
+                "run": run.to_dict(),
+                "report": runtime.get_swarm_run_report(run.id) if show_report else None,
+                "observations": observations,
+            }
+
+        if deadline is not None and time.monotonic() >= deadline:
+            return {
+                "timed_out": True,
+                "run": run.to_dict(),
+                "report": runtime.get_swarm_run_report(run.id) if show_report and run.report_path else None,
+                "observations": observations,
+            }
+
+        time.sleep(max(0.1, interval_seconds))
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -140,6 +206,93 @@ def _build_parser() -> argparse.ArgumentParser:
 
     context_pending_list = sub.add_parser("context-pending-list")
     context_pending_list.add_argument("--limit", type=int, default=50)
+
+    swarm_contract_create = sub.add_parser("swarm-contract-create")
+    swarm_contract_create.add_argument("--title", required=True)
+    swarm_contract_create.add_argument("--objective", required=True)
+    swarm_contract_create.add_argument("--template", default="")
+    swarm_contract_create.add_argument("--room-id", default="")
+    swarm_contract_create.add_argument("--room-kind", default="project")
+    swarm_contract_create.add_argument("--target", default="")
+    swarm_contract_create.add_argument("--launcher", default="")
+    swarm_contract_create.add_argument("--agents-json", default="")
+    swarm_contract_create.add_argument("--deployment-policy", default="")
+    swarm_contract_create.add_argument("--metadata", default="{}")
+    swarm_contract_create.add_argument("--source-refs", default="")
+    swarm_contract_create.add_argument("--created-by", default="cli")
+    swarm_contract_create.add_argument("--session-id")
+
+    swarm_start = sub.add_parser("swarm-start")
+    swarm_start.add_argument("--title", required=True)
+    swarm_start.add_argument("--objective", required=True)
+    swarm_start.add_argument("--template", default="")
+    swarm_start.add_argument("--room-id", default="")
+    swarm_start.add_argument("--room-kind", default="project")
+    swarm_start.add_argument("--target", default="")
+    swarm_start.add_argument("--launcher", default="")
+    swarm_start.add_argument("--agents-json", default="")
+    swarm_start.add_argument("--deployment-policy", default="")
+    swarm_start.add_argument("--metadata", default="{}")
+    swarm_start.add_argument("--source-refs", default="")
+    swarm_start.add_argument("--created-by", default="cli")
+    swarm_start.add_argument("--session-id")
+    swarm_start.add_argument("--vpn-ssh-target", default="")
+    swarm_start.add_argument("--remote-workdir", default="")
+    swarm_start.add_argument("--remote-python", default="python3")
+    swarm_start.add_argument("--dry-run", action="store_true")
+    swarm_start.add_argument("--watch", action="store_true")
+    swarm_start.add_argument("--watch-interval", type=float, default=1.0)
+    swarm_start.add_argument("--watch-timeout", type=float, default=60.0)
+    swarm_start.add_argument("--show-report", action="store_true")
+
+    swarm_contract_get = sub.add_parser("swarm-contract-get")
+    swarm_contract_get.add_argument("contract_id")
+
+    swarm_contract_list = sub.add_parser("swarm-contract-list")
+    swarm_contract_list.add_argument("--room-id")
+    swarm_contract_list.add_argument("--status")
+    swarm_contract_list.add_argument("--limit", type=int, default=20)
+
+    swarm_launch = sub.add_parser("swarm-launch")
+    swarm_launch.add_argument("contract_id")
+    swarm_launch.add_argument("--target")
+    swarm_launch.add_argument("--launcher")
+    swarm_launch.add_argument("--vpn-ssh-target", default="")
+    swarm_launch.add_argument("--remote-workdir", default="")
+    swarm_launch.add_argument("--remote-python", default="python3")
+    swarm_launch.add_argument("--dry-run", action="store_true")
+    swarm_launch.add_argument("--created-by", default="cli")
+    swarm_launch.add_argument("--session-id")
+    swarm_launch.add_argument("--watch", action="store_true")
+    swarm_launch.add_argument("--watch-interval", type=float, default=1.0)
+    swarm_launch.add_argument("--watch-timeout", type=float, default=60.0)
+    swarm_launch.add_argument("--show-report", action="store_true")
+
+    swarm_run_list = sub.add_parser("swarm-run-list")
+    swarm_run_list.add_argument("--contract-id")
+    swarm_run_list.add_argument("--room-id")
+    swarm_run_list.add_argument("--status")
+    swarm_run_list.add_argument("--limit", type=int, default=20)
+
+    swarm_run_get = sub.add_parser("swarm-run-get")
+    swarm_run_get.add_argument("run_id")
+
+    swarm_run_report = sub.add_parser("swarm-run-report")
+    swarm_run_report.add_argument("run_id")
+
+    swarm_run_watch = sub.add_parser("swarm-run-watch")
+    swarm_run_watch.add_argument("run_id")
+    swarm_run_watch.add_argument("--interval", type=float, default=1.0)
+    swarm_run_watch.add_argument("--timeout", type=float, default=60.0)
+    swarm_run_watch.add_argument("--show-report", action="store_true")
+
+    swarm_vpn_bootstrap = sub.add_parser("swarm-vpn-bootstrap")
+    swarm_vpn_bootstrap.add_argument("--ssh-target", default="")
+    swarm_vpn_bootstrap.add_argument("--remote-workdir", default="~/Butler-os/aibutler-core")
+    swarm_vpn_bootstrap.add_argument("--repo-url", default="https://github.com/BoarderOnATrip/Butler-os.git")
+    swarm_vpn_bootstrap.add_argument("--branch", default="main")
+    swarm_vpn_bootstrap.add_argument("--remote-python", default="python3")
+    swarm_vpn_bootstrap.add_argument("--execute", action="store_true")
 
     return parser
 
@@ -281,6 +434,139 @@ def main() -> int:
         ).to_dict()
     elif args.command == "context-pending-list":
         result = [item.to_dict() for item in runtime.list_pending_context(limit=args.limit)]
+    elif args.command == "swarm-contract-create":
+        agents = json.loads(args.agents_json) if args.agents_json else None
+        deployment_policy = json.loads(args.deployment_policy) if args.deployment_policy else None
+        source_refs = [ref for ref in args.source_refs.split(",") if ref]
+        result = runtime.create_swarm_contract(
+            title=args.title,
+            objective=args.objective,
+            template=args.template,
+            room_id=args.room_id or None,
+            room_kind=args.room_kind,
+            target=args.target,
+            launcher=args.launcher,
+            agents=agents,
+            deployment_policy=deployment_policy,
+            metadata=json.loads(args.metadata),
+            source_refs=source_refs,
+            created_by=args.created_by,
+            session_id=args.session_id,
+        ).to_dict()
+    elif args.command == "swarm-start":
+        agents = json.loads(args.agents_json) if args.agents_json else None
+        deployment_policy = json.loads(args.deployment_policy) if args.deployment_policy else None
+        source_refs = [ref for ref in args.source_refs.split(",") if ref]
+        contract = runtime.create_swarm_contract(
+            title=args.title,
+            objective=args.objective,
+            template=args.template,
+            room_id=args.room_id or None,
+            room_kind=args.room_kind,
+            target=args.target,
+            launcher=args.launcher,
+            agents=agents,
+            deployment_policy=deployment_policy,
+            metadata=json.loads(args.metadata),
+            source_refs=source_refs,
+            created_by=args.created_by,
+            session_id=args.session_id,
+        )
+        launch = runtime.launch_swarm_contract(
+            contract.id,
+            target=args.target or None,
+            launcher=args.launcher or None,
+            vpn_ssh_target=args.vpn_ssh_target,
+            remote_workdir=args.remote_workdir,
+            remote_python=args.remote_python,
+            dry_run=args.dry_run,
+            created_by=args.created_by,
+            session_id=args.session_id,
+        )
+        result = launch
+        if args.watch and launch.get("launch_ready") and launch.get("run", {}).get("run_id"):
+            watch = _watch_swarm_run(
+                runtime,
+                launch["run"]["run_id"],
+                interval_seconds=args.watch_interval,
+                timeout_seconds=args.watch_timeout,
+                show_report=args.show_report,
+            )
+            result = {
+                **launch,
+                "run": watch.get("run", launch.get("run")),
+                "watch": watch,
+            }
+    elif args.command == "swarm-contract-get":
+        contract = runtime.get_swarm_contract(args.contract_id)
+        result = contract.to_dict() if contract else {"error": "not found"}
+    elif args.command == "swarm-contract-list":
+        result = [
+            contract.to_dict()
+            for contract in runtime.list_swarm_contracts(
+                room_id=args.room_id,
+                status=args.status,
+                limit=args.limit,
+            )
+        ]
+    elif args.command == "swarm-launch":
+        result = runtime.launch_swarm_contract(
+            args.contract_id,
+            target=args.target,
+            launcher=args.launcher,
+            vpn_ssh_target=args.vpn_ssh_target,
+            remote_workdir=args.remote_workdir,
+            remote_python=args.remote_python,
+            dry_run=args.dry_run,
+            created_by=args.created_by,
+            session_id=args.session_id,
+        )
+        if args.watch and result.get("launch_ready") and result.get("run", {}).get("run_id"):
+            watch = _watch_swarm_run(
+                runtime,
+                result["run"]["run_id"],
+                interval_seconds=args.watch_interval,
+                timeout_seconds=args.watch_timeout,
+                show_report=args.show_report,
+            )
+            result = {
+                **result,
+                "run": watch.get("run", result.get("run")),
+                "watch": watch,
+            }
+    elif args.command == "swarm-run-list":
+        result = [
+            run.to_dict()
+            for run in runtime.list_swarm_runs(
+                contract_id=args.contract_id,
+                room_id=args.room_id,
+                status=args.status,
+                limit=args.limit,
+            )
+        ]
+    elif args.command == "swarm-run-get":
+        run = runtime.get_swarm_run(args.run_id)
+        result = run.to_dict() if run else {"error": "not found"}
+    elif args.command == "swarm-run-report":
+        report = runtime.get_swarm_run_report(args.run_id)
+        result = report or {"error": "not found"}
+    elif args.command == "swarm-run-watch":
+        result = _watch_swarm_run(
+            runtime,
+            args.run_id,
+            interval_seconds=args.interval,
+            timeout_seconds=args.timeout,
+            show_report=args.show_report,
+        )
+    elif args.command == "swarm-vpn-bootstrap":
+        result = runtime.build_swarm_vpn_bootstrap(
+            ssh_target=args.ssh_target,
+            remote_workdir=args.remote_workdir,
+            repo_url=args.repo_url,
+            branch=args.branch,
+            remote_python=args.remote_python,
+            execute=args.execute,
+        )
     else:
         result = {"error": f"Unknown command: {args.command}"}
 
