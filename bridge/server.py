@@ -26,6 +26,7 @@ import secrets
 import subprocess
 import sys
 import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
@@ -90,6 +91,7 @@ def _save_bridge_state(state: dict) -> None:
 
 BRIDGE_STATE = _load_or_create_bridge_state()
 LAN_ENABLED = os.environ.get("AIBUTLER_BRIDGE_ALLOW_LAN", os.environ.get("AIBUTLER_BRIDGE_LAN", "0")) == "1"
+UI_TRACE_LOG_PATH = Path.home() / ".aibutler" / "bridge_ui_traces.jsonl"
 
 
 def _pairing_token() -> str:
@@ -266,6 +268,14 @@ class SwarmVPNBootstrapRequest(BaseModel):
     execute: bool = False
 
 
+class UiTraceEventRequest(BaseModel):
+    surface: str = "dewdrops"
+    label: str
+    detail: str = ""
+    selected_ids: list[str] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+
 def _desktop_get_clipboard() -> str:
     result = subprocess.run(["pbpaste"], capture_output=True)
     return result.stdout.decode("utf-8", errors="replace")
@@ -273,6 +283,34 @@ def _desktop_get_clipboard() -> str:
 
 def _desktop_set_clipboard(text: str) -> None:
     subprocess.run(["pbcopy"], input=text, text=True, check=True)
+
+
+def _append_ui_trace(event: dict) -> None:
+    UI_TRACE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with UI_TRACE_LOG_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=True) + "\n")
+
+
+def _read_ui_traces(surface: str | None = None, limit: int = 50) -> list[dict]:
+    if not UI_TRACE_LOG_PATH.exists():
+        return []
+    rows: list[dict] = []
+    try:
+        with UI_TRACE_LOG_PATH.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if surface and row.get("surface") != surface:
+                    continue
+                rows.append(row)
+    except Exception:
+        return []
+    return rows[-max(1, min(limit, 500)) :]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -694,6 +732,38 @@ def build_swarm_vpn_bootstrap(req: SwarmVPNBootstrapRequest, _: None = Depends(_
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/debug/ui-trace")
+def append_ui_trace(req: UiTraceEventRequest, _: None = Depends(_require_pairing_token)):
+    """Append a lightweight UI trace event from a local desktop surface."""
+    try:
+        event = {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "surface": req.surface,
+            "label": req.label,
+            "detail": req.detail,
+            "selected_ids": req.selected_ids,
+            "metadata": req.metadata,
+        }
+        _append_ui_trace(event)
+        return {"ok": True, "event": event}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/debug/ui-trace")
+def list_ui_trace(
+    surface: str | None = None,
+    limit: int = 50,
+    _: None = Depends(_require_pairing_token),
+):
+    """List recent UI trace events for local debugging."""
+    try:
+        events = _read_ui_traces(surface=surface, limit=limit)
+        return {"ok": True, "events": events}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
