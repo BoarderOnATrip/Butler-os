@@ -1858,6 +1858,7 @@ class ButlerRuntime:
                 objective=agent.objective,
                 depends_on=list(agent.depends_on),
                 status="planned",
+                metadata=copy.deepcopy(agent.metadata),
             )
             for agent in contract.agents
         ]
