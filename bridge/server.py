@@ -131,6 +131,27 @@ def _get_session():
     )
 
 
+def _swarm_run_summary(run) -> dict:
+    agent_status_counts: dict[str, int] = {}
+    for state in run.agent_states:
+        agent_status_counts[state.status] = agent_status_counts.get(state.status, 0) + 1
+    return {
+        "run_id": run.id,
+        "contract_id": run.contract_id,
+        "room_id": run.room_id,
+        "title": run.title,
+        "status": run.status,
+        "summary": run.summary,
+        "target": run.target,
+        "launcher": run.launcher,
+        "updated_at": run.updated_at,
+        "launched_at": run.launched_at,
+        "completed_at": run.completed_at,
+        "report_available": bool(run.report_path),
+        "agent_status_counts": agent_status_counts,
+    }
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Request / Response models
 # ──────────────────────────────────────────────────────────────────────────────
@@ -266,6 +287,10 @@ class SwarmVPNBootstrapRequest(BaseModel):
     branch: str = "main"
     remote_python: str = "python3"
     execute: bool = False
+
+
+class SwarmRunStopRequest(BaseModel):
+    created_by: str = "mobile"
 
 
 class UiTraceEventRequest(BaseModel):
@@ -492,6 +517,42 @@ def get_room(room_id: str, _: None = Depends(_require_pairing_token)):
     return {"ok": True, "room": room.to_dict()}
 
 
+@app.get("/rooms/{room_id}/swarm-runs")
+def list_room_swarm_runs(
+    room_id: str,
+    status: str | None = None,
+    limit: int = 25,
+    _: None = Depends(_require_pairing_token),
+):
+    """List recent swarm runs for one Butler room."""
+    room = runtime.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    runs = runtime.list_swarm_runs(room_id=room_id, status=status, limit=limit)
+    return {
+        "ok": True,
+        "room": room.to_dict(),
+        "runs": [run.to_dict() for run in runs],
+    }
+
+
+@app.get("/rooms/{room_id}/swarm-runs/latest-active")
+def get_room_latest_active_swarm_run(room_id: str, _: None = Depends(_require_pairing_token)):
+    """Fetch the most recent active swarm run for one Butler room."""
+    room = runtime.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    run = runtime.get_latest_active_swarm_run(room_id=room_id)
+    if not run:
+        return {"ok": True, "room": room.to_dict(), "run": None, "summary": None}
+    return {
+        "ok": True,
+        "room": room.to_dict(),
+        "run": run.to_dict(),
+        "summary": _swarm_run_summary(run),
+    }
+
+
 @app.post("/rooms/resolve")
 def resolve_room(req: RoomResolveRequest, _: None = Depends(_require_pairing_token)):
     """Resolve an existing room by source ref or create one if none exists."""
@@ -713,6 +774,16 @@ def get_swarm_run_report(run_id: str, _: None = Depends(_require_pairing_token))
     if not report:
         raise HTTPException(status_code=404, detail="Swarm run report not found.")
     return {"ok": True, "report": report}
+
+
+@app.post("/swarm/runs/{run_id}/stop")
+def stop_swarm_run(run_id: str, req: SwarmRunStopRequest, _: None = Depends(_require_pairing_token)):
+    """Stop one swarm run and mark it cancelled."""
+    session = _get_session()
+    run = runtime.stop_swarm_run(run_id, created_by=req.created_by, session_id=session.id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Swarm run not found.")
+    return {"ok": True, "run": run.to_dict()}
 
 
 @app.post("/swarm/bootstrap/vpn")

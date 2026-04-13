@@ -15,6 +15,7 @@ import copy
 import json
 import os
 import shlex
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -78,6 +79,17 @@ def _normalized_swarm_template(value: str) -> str:
     if normalized in {"planning", "relationship", "operator", "research", "build"}:
         return normalized
     return "planning"
+
+
+ACTIVE_SWARM_RUN_STATUSES = frozenset(
+    {
+        "staged",
+        "queued",
+        "running",
+        "awaiting_oversight",
+        "blocked",
+    }
+)
 
 
 def _infer_swarm_template(objective: str) -> str:
@@ -1547,6 +1559,24 @@ class ButlerRuntime:
         runs.sort(key=lambda run: run.updated_at or run.created_at, reverse=True)
         return runs[:limit]
 
+    def get_latest_active_swarm_run(
+        self,
+        *,
+        contract_id: str | None = None,
+        room_id: str | None = None,
+    ) -> SwarmRun | None:
+        runs = self._load_swarm_runs()
+        runs = [self._reconcile_swarm_run(run) for run in runs]
+        if contract_id:
+            runs = [run for run in runs if run.contract_id == contract_id]
+        if room_id:
+            runs = [run for run in runs if run.room_id == room_id]
+        runs = [run for run in runs if run.status in ACTIVE_SWARM_RUN_STATUSES]
+        if not runs:
+            return None
+        runs.sort(key=lambda run: run.updated_at or run.created_at, reverse=True)
+        return runs[0]
+
     def _save_swarm_run_instance(self, run: SwarmRun) -> SwarmRun:
         runs = self._load_swarm_runs()
         replaced = False
@@ -1726,6 +1756,74 @@ class ButlerRuntime:
                 "run_id": run.id,
                 "agent_id": agent_id,
                 "status": status,
+                "created_at": run.updated_at,
+            }
+        )
+        return run
+
+    def stop_swarm_run(
+        self,
+        run_id: str,
+        *,
+        created_by: str = "runtime",
+        session_id: str | None = None,
+    ) -> SwarmRun | None:
+        run = self.get_swarm_run(run_id)
+        if not run:
+            return None
+
+        terminal_statuses = {"completed", "failed", "cancelled"}
+        if run.status in terminal_statuses:
+            return run
+
+        stop_errors: list[str] = []
+        if run.execution_backend == "local_process" and run.pid:
+            try:
+                os.kill(run.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except OSError as exc:
+                stop_errors.append(str(exc))
+        elif run.execution_backend == "ssh_remote":
+            ssh_target = str(run.metadata.get("vpn_ssh_target", "")).strip()
+            remote_job_id = (run.remote_job_id or "").strip()
+            if ssh_target and remote_job_id:
+                result = subprocess.run(
+                    ["ssh", ssh_target, f"kill {shlex.quote(remote_job_id)}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                )
+                if result.returncode != 0:
+                    stop_errors.append((result.stderr or result.stdout).strip() or "remote stop failed")
+
+        now = utc_now()
+        for state in run.agent_states:
+            if state.status not in terminal_statuses:
+                state.status = "cancelled"
+                state.completed_at = state.completed_at or now
+                if not state.error:
+                    state.error = "Stopped by operator."
+
+        run.status = "cancelled"
+        run.summary = "Swarm stopped by operator."
+        run.completed_at = now
+        run.updated_at = now
+        run.metadata = {
+            **run.metadata,
+            "stopped_by": created_by,
+            "stopped_at": now,
+        }
+        if stop_errors:
+            run.metadata["stop_errors"] = stop_errors
+
+        self._save_swarm_run_instance(run)
+        self._snapshot_swarm_run(run, session_id=session_id)
+        self._write_swarm_event(
+            {
+                "event": "swarm_run_updated",
+                "run_id": run.id,
+                "status": run.status,
                 "created_at": run.updated_at,
             }
         )
